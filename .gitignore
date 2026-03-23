@@ -1,0 +1,27 @@
+# API keys — NEVER commit this file
+.env
+
+# Python virtual environment
+.venv/
+venv/
+env/
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+
+# Streamlit cache
+.streamlit/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+
+# User data (personal learning progress — not for version control)
+data/
+
+# Pip install artifact (from malformed install command)
+=0.1.20
+AI-/
