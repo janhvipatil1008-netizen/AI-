@@ -13,17 +13,6 @@ from dotenv import load_dotenv
 # load_dotenv() does nothing if .env doesn't exist — no errors.
 load_dotenv()
 
-# ── API Key ──────────────────────────────────────────────────────────────────
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-# NOTE: Not required for core functionality. Only used by ask_chatgpt() in
-# search_tools.py (Research Agent cross-reference). If missing, that tool
-# returns a graceful error message instead of crashing.
-
-# ── Model ─────────────────────────────────────────────────────────────────────
-# gpt-4o-mini is fast and cheap — great for learning and iteration.
-# Change this to "gpt-4o" if you want higher quality responses.
-MODEL_NAME = "gpt-4o-mini"
-
 # ── Conversation limits ───────────────────────────────────────────────────────
 # How many back-and-forth exchanges to keep in history.
 # Each exchange = 1 user message + 1 assistant reply = 2 messages.

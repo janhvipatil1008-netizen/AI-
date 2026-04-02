@@ -137,24 +137,6 @@ _SEARCH_TOOLS = [
         },
     },
     {
-        "name": "ask_chatgpt",
-        "description": (
-            "Ask ChatGPT (OpenAI GPT-4o) the same question to get a second AI perspective. "
-            "Use this to cross-reference your own knowledge, get an alternative explanation, "
-            "or identify where two leading AI models agree or differ on a topic."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "question": {
-                    "type": "string",
-                    "description": "The research question to ask ChatGPT.",
-                },
-            },
-            "required": ["question"],
-        },
-    },
-    {
         "name": "wiki_search",
         "description": "Get a Wikipedia summary for an AI/ML concept or topic.",
         "input_schema": {

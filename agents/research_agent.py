@@ -35,7 +35,7 @@ import json
 
 from config.settings import MAX_HISTORY_TURNS
 from config.prompts import build_research_system_prompt
-from utils.search_tools import search_web, ask_chatgpt, search_wikipedia, search_arxiv
+from utils.search_tools import search_web, search_wikipedia, search_arxiv
 from utils.claude_client import ClaudeClient
 from utils.skills_loader import load_combined_skill
 
@@ -114,7 +114,7 @@ class ResearchAgent:
         the result as a string (Claude expects string tool results).
 
         Args:
-            name: Tool name — "ask_chatgpt", "wiki_search", or "search_arxiv"
+            name: Tool name — "web_search", "wiki_search", or "search_arxiv"
             args: The arguments Claude wants to pass (already parsed from JSON)
 
         Returns:
@@ -124,10 +124,6 @@ class ResearchAgent:
             query = args.get("query", "")
             max_results = args.get("max_results", 5)
             return search_web(query, max_results)
-
-        elif name == "ask_chatgpt":
-            question = args.get("question", "")
-            return ask_chatgpt(question)
 
         elif name == "wiki_search":
             topic = args.get("topic", "")

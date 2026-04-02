@@ -21,7 +21,6 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 
 import wikipedia
-from openai import OpenAI
 from tavily import TavilyClient
 
 
@@ -68,64 +67,6 @@ def search_web(query: str, max_results: int = 5) -> str:
 
     except Exception as e:
         return json.dumps({"error": f"Tavily search failed: {str(e)}"})
-
-
-def ask_chatgpt(question: str) -> str:
-    """
-    Ask ChatGPT (OpenAI GPT-4o) a question and return its answer as a research source.
-
-    WHAT THIS DOES:
-    ---------------
-    The Research Agent is powered by Claude. This tool lets Claude ask ChatGPT
-    the same question and get a second AI's perspective. Claude then synthesises
-    both views — its own knowledge AND ChatGPT's answer — into one response.
-
-    WHY THIS IS USEFUL:
-    -------------------
-    Different AI models are trained differently and can emphasise different aspects
-    of the same topic. Getting two AI perspectives:
-      - Catches gaps one model might miss
-      - Highlights where the two AIs agree (high confidence) or differ (worth noting)
-      - Gives the learner a richer, more cross-referenced answer
-
-    REQUIRES: OPENAI_API_KEY in your .env file.
-
-    Args:
-        question: The research question to ask ChatGPT.
-
-    Returns:
-        ChatGPT's answer as a string, labelled as [ChatGPT Source].
-        Returns an error message if the API key is missing or call fails.
-    """
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        return (
-            "[ChatGPT Source] Unavailable — OPENAI_API_KEY not set in .env. "
-            "Add it to use ChatGPT as a research source."
-        )
-
-    try:
-        client = OpenAI(api_key=api_key)
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a knowledgeable AI research assistant. "
-                        "Give a thorough, accurate explanation. "
-                        "Focus on clarity and depth. Aim for 3-5 paragraphs."
-                    ),
-                },
-                {"role": "user", "content": question},
-            ],
-            max_tokens=1200,
-        )
-        answer = response.choices[0].message.content
-        return f"[ChatGPT / GPT-4o Source]\n\n{answer}"
-
-    except Exception as e:
-        return f"[ChatGPT Source] Request failed: {str(e)}"
 
 
 def search_wikipedia(topic: str) -> str:
