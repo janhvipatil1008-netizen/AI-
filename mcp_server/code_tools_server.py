@@ -63,25 +63,25 @@ mcp = FastMCP("AI² Code Tools Server")
 # Claude returns these verbatim so learners have a working starting point.
 
 _TEMPLATES: dict[str, str] = {
-    "openai_chat": '''\
+    "claude_chat": '''\
 """
-Minimal OpenAI chat completion — the simplest possible AI app.
+Minimal Claude chat completion — the simplest possible AI app.
 Replace "your message here" with your actual prompt.
 """
 import os
-from openai import OpenAI
+from anthropic import Anthropic
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-response = client.chat.completions.create(
-    model="gpt-4o-mini",
+response = client.messages.create(
+    model="claude-sonnet-4-6",
+    max_tokens=1024,
     messages=[
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user",   "content": "your message here"},
+        {"role": "user", "content": "your message here"},
     ],
 )
 
-print(response.choices[0].message.content)
+print(response.content[0].text)
 ''',
 
     "rag_pipeline": '''\
@@ -89,13 +89,15 @@ print(response.choices[0].message.content)
 Minimal RAG (Retrieval-Augmented Generation) pipeline.
 Chunks text → embeds → stores → retrieves → generates answer.
 
-Install: pip install openai chromadb
+Install: pip install anthropic sentence-transformers chromadb
 """
 import os
-from openai import OpenAI
+from anthropic import Anthropic
+from sentence_transformers import SentenceTransformer
 import chromadb
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+claude = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+embed_model = SentenceTransformer("all-MiniLM-L6-v2")  # free, no API key
 chroma = chromadb.Client()
 collection = chroma.create_collection("docs")
 
@@ -106,38 +108,28 @@ docs = [
     "First retrieve relevant chunks, then pass them to the LLM as context.",
 ]
 
-# Embed and store each document
 for i, doc in enumerate(docs):
-    embed_response = client.embeddings.create(
-        model="text-embedding-3-small", input=doc
-    )
     collection.add(
         documents=[doc],
-        embeddings=[embed_response.data[0].embedding],
+        embeddings=[embed_model.encode(doc).tolist()],
         ids=[f"doc_{i}"],
     )
 
 # ── 2. Query ──────────────────────────────────────────────────────────────────
 question = "What is RAG?"
-
-q_embed = client.embeddings.create(
-    model="text-embedding-3-small", input=question
-)
-results = collection.query(
-    query_embeddings=[q_embed.data[0].embedding],
-    n_results=2,
-)
+q_embedding = embed_model.encode(question).tolist()
+results = collection.query(query_embeddings=[q_embedding], n_results=2)
 context = "\\n".join(results["documents"][0])
 
 # ── 3. Generate answer with context ──────────────────────────────────────────
-response = client.chat.completions.create(
-    model="gpt-4o-mini",
+response = claude.messages.create(
+    model="claude-sonnet-4-6",
+    max_tokens=512,
     messages=[
-        {"role": "system", "content": f"Answer using this context:\\n{context}"},
-        {"role": "user",   "content": question},
+        {"role": "user", "content": f"Context:\\n{context}\\n\\nQuestion: {question}"},
     ],
 )
-print(response.choices[0].message.content)
+print(response.content[0].text)
 ''',
 
     "streamlit_app": '''\
@@ -145,13 +137,13 @@ print(response.choices[0].message.content)
 Minimal Streamlit AI chat app — the pattern used throughout AI².
 Run with: streamlit run app.py
 """
-import streamlit as st
 import os
-from openai import OpenAI
+import streamlit as st
+from anthropic import Anthropic
 
 st.title("My AI Chat")
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 # Session state keeps the conversation alive across reruns
 if "messages" not in st.session_state:
@@ -170,14 +162,12 @@ if prompt := st.chat_input("Ask something..."):
 
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant."},
-                    *st.session_state.messages,
-                ],
+            response = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=1024,
+                messages=st.session_state.messages,
             )
-            reply = response.choices[0].message.content
+            reply = response.content[0].text
         st.markdown(reply)
 
     st.session_state.messages.append({"role": "assistant", "content": reply})
@@ -256,25 +246,18 @@ for block in response.content:
 """
 Minimal embedding + similarity example.
 Shows how to turn text into numbers and find the most similar item.
+
+Install: pip install sentence-transformers numpy
+No API key needed — model runs locally.
 """
-import os
-from openai import OpenAI
-import json
+from sentence_transformers import SentenceTransformer
+import numpy as np
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+model = SentenceTransformer("all-MiniLM-L6-v2")
 
-def embed(text: str) -> list[float]:
-    response = client.embeddings.create(
-        model="text-embedding-3-small",
-        input=text,
-    )
-    return response.data[0].embedding
-
-def cosine_similarity(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
-    mag_a = sum(x**2 for x in a) ** 0.5
-    mag_b = sum(x**2 for x in b) ** 0.5
-    return dot / (mag_a * mag_b) if mag_a and mag_b else 0.0
+def cosine_similarity(a, b):
+    a, b = np.array(a), np.array(b)
+    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
 
 # Items to search
 items = [
@@ -285,10 +268,10 @@ items = [
 ]
 
 query = "I want to search through documents using AI"
-query_vec = embed(query)
+query_vec = model.encode(query)
 
 # Score each item against the query
-scores = [(item, cosine_similarity(query_vec, embed(item))) for item in items]
+scores = [(item, cosine_similarity(query_vec, model.encode(item))) for item in items]
 scores.sort(key=lambda x: x[1], reverse=True)
 
 print(f"Query: {query}\\n")
@@ -408,11 +391,11 @@ def get_code_template(template_name: str) -> str:
     a working skeleton to modify rather than starting from scratch.
 
     Available templates:
-      "openai_chat"    — minimal OpenAI chat completion (the basics)
+      "claude_chat"    — minimal Claude chat completion (the basics)
       "rag_pipeline"   — chunking + embedding + retrieval + generation
       "streamlit_app"  — chat UI with session state (like this platform)
       "tool_use"       — Claude tool use / function calling (ReAct pattern)
-      "embeddings"     — text embeddings + cosine similarity from scratch
+      "embeddings"     — text embeddings + cosine similarity (sentence-transformers)
 
     Returns the template code as a string, or an error if not found.
 
@@ -435,11 +418,11 @@ def list_templates() -> str:
     to show them the full menu of starter templates available.
     """
     descriptions = {
-        "openai_chat":   "Minimal OpenAI chat completion — the simplest possible AI app",
+        "claude_chat":   "Minimal Claude chat completion — the simplest possible AI app",
         "rag_pipeline":  "RAG: chunk → embed → store → retrieve → generate (with ChromaDB)",
         "streamlit_app": "Chat UI with session state — same pattern as this learning platform",
         "tool_use":      "Claude tool use / function calling — the ReAct pattern explained",
-        "embeddings":    "Text embeddings + cosine similarity, built from scratch",
+        "embeddings":    "Text embeddings + cosine similarity (sentence-transformers, no API key)",
     }
     return json.dumps(descriptions, indent=2)
 

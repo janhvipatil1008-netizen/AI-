@@ -186,7 +186,7 @@ _CODE_TOOLS = [
     },
     {
         "name": "get_code_template",
-        "description": "Get a starter code template. Options: openai_chat, rag_pipeline, streamlit_app, tool_use, embeddings.",
+        "description": "Get a starter code template. Options: claude_chat, rag_pipeline, streamlit_app, tool_use, embeddings.",
         "input_schema": {
             "type": "object",
             "properties": {

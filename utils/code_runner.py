@@ -22,20 +22,20 @@ PROFILE_PATH = Path("data/learning_profile.json")
 # ── Starter templates ──────────────────────────────────────────────────────────
 
 _TEMPLATES: dict[str, str] = {
-    "openai_chat": '''\
+    "claude_chat": '''\
 import os
-from openai import OpenAI
+from anthropic import Anthropic
 
-client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
-response = client.chat.completions.create(
-    model="gpt-4o-mini",
+response = client.messages.create(
+    model="claude-sonnet-4-6",
+    max_tokens=1024,
     messages=[
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user",   "content": "What is RAG?"},
+        {"role": "user", "content": "What is RAG?"},
     ],
 )
-print(response.choices[0].message.content)
+print(response.content[0].text)
 ''',
 
     "rag_pipeline": '''\
@@ -160,20 +160,13 @@ for block in response.content:
 ''',
 
     "embeddings": '''\
-import os
+# pip install sentence-transformers
+from sentence_transformers import SentenceTransformer
 import numpy as np
-from openai import OpenAI
 
-client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+model = SentenceTransformer("all-MiniLM-L6-v2")  # free, no API key needed
 
-def embed(text: str) -> list[float]:
-    response = client.embeddings.create(
-        model="text-embedding-3-small",
-        input=text,
-    )
-    return response.data[0].embedding
-
-def cosine_similarity(a: list[float], b: list[float]) -> float:
+def cosine_similarity(a, b):
     a, b = np.array(a), np.array(b)
     return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
 
@@ -184,9 +177,9 @@ docs = [
 ]
 
 query = "How do I improve LLM output quality?"
-q_emb = embed(query)
+q_emb = model.encode(query)
 
-scores = [(doc, cosine_similarity(q_emb, embed(doc))) for doc in docs]
+scores = [(doc, cosine_similarity(q_emb, model.encode(doc))) for doc in docs]
 scores.sort(key=lambda x: x[1], reverse=True)
 
 print(f"Query: {query}\\n")
@@ -253,11 +246,11 @@ def get_code_template(template_name: str) -> str:
 
 def list_templates() -> str:
     descriptions = {
-        "openai_chat":    "Basic OpenAI chat completion call",
-        "rag_pipeline":   "Retrieval-Augmented Generation with Chroma",
-        "streamlit_app":  "Streamlit chatbot interface with Claude",
-        "tool_use":       "Claude tool use / function calling ReAct loop",
-        "embeddings":     "OpenAI text embeddings + cosine similarity",
+        "claude_chat":   "Basic Claude chat completion call",
+        "rag_pipeline":  "Retrieval-Augmented Generation with Chroma",
+        "streamlit_app": "Streamlit chatbot interface with Claude",
+        "tool_use":      "Claude tool use / function calling ReAct loop",
+        "embeddings":    "Text embeddings + cosine similarity (sentence-transformers, no API key)",
     }
     return "\n".join(f"- **{k}**: {v}" for k, v in descriptions.items())
 
