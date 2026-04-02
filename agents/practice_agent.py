@@ -249,8 +249,8 @@ class PracticeAgent:
         result = self._extract_result(raw_reply, data)
 
         # Step 6: Record the result and end session if complete
-        if result:
-            self.current_session["results"].append(result)
+        if result and self.current_session:
+            self.current_session.setdefault("results", []).append(result)
             if result.get("session_complete"):
                 self.end_session()
 

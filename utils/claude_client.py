@@ -366,13 +366,22 @@ class ClaudeClient:
         Returns:
             Claude's text reply as a string.
         """
-        response = self.client.messages.create(
-            model=model or self.DEFAULT_MODEL,
-            system=system,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        try:
+            response = self.client.messages.create(
+                model=model or self.DEFAULT_MODEL,
+                system=system,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+        except anthropic.AuthenticationError:
+            return "[Error]: Invalid API key. Check ANTHROPIC_API_KEY in your .env file."
+        except anthropic.RateLimitError:
+            return "[Error]: Rate limit reached. Please wait a moment and try again."
+        except anthropic.APIConnectionError:
+            return "[Error]: Could not reach the Anthropic API. Check your internet connection."
+        except anthropic.APIError as e:
+            return f"[Error]: Anthropic API error — {e}"
         for block in response.content:
             if block.type == "text":
                 return block.text
@@ -424,14 +433,23 @@ class ClaudeClient:
         working_messages = list(messages)  # don't mutate the caller's list
 
         for _ in range(self.MAX_TOOL_ITERATIONS):
-            response = self.client.messages.create(
-                model=model or self.DEFAULT_MODEL,
-                system=system,
-                messages=working_messages,
-                tools=active_tools,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
+            try:
+                response = self.client.messages.create(
+                    model=model or self.DEFAULT_MODEL,
+                    system=system,
+                    messages=working_messages,
+                    tools=active_tools,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+            except anthropic.AuthenticationError:
+                return "[Error]: Invalid API key. Check ANTHROPIC_API_KEY in your .env file."
+            except anthropic.RateLimitError:
+                return "[Error]: Rate limit reached. Please wait a moment and try again."
+            except anthropic.APIConnectionError:
+                return "[Error]: Could not reach the Anthropic API. Check your internet connection."
+            except anthropic.APIError as e:
+                return f"[Error]: Anthropic API error — {e}"
 
             # ── Claude is done ────────────────────────────────────────────────
             if response.stop_reason == "end_turn":

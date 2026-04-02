@@ -490,8 +490,8 @@ def get_current_phase_id(syllabus_progress: dict, selected_roles: list[str]) -> 
     Logic: the first phase that isn't 100% complete.
     Falls back to the last phase if all are done.
     """
+    progress = get_progress(syllabus_progress, selected_roles)
     for phase in PHASES:
-        progress = get_progress(syllabus_progress, selected_roles)
         ph = progress["by_phase"].get(phase["id"], {})
         if ph.get("pct", 0) < 100 or ph.get("total", 0) == 0:
             return phase["id"]

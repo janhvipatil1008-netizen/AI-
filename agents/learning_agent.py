@@ -195,7 +195,7 @@ class LearningAgent:
         actions = []
         for line in response.splitlines():
             line = line.strip()
-            if line.startswith("ACTION:") or line.startswith("HANDOFF:"):
+            if line.startswith("ACTION:"):
                 # Split on the first colon to get the type prefix
                 prefix, _, rest = line.partition(":")
                 parts = [p.strip() for p in rest.split("|")]
@@ -439,7 +439,8 @@ class LearningAgent:
         return f"goal_{int(time.time())}"
 
     def _make_milestone_id(self) -> str:
-        return f"ms_{int(time.time() * 1000) % 10_000_000}"
+        import uuid
+        return f"ms_{uuid.uuid4().hex[:8]}"
 
     def _get_goal_by_id(self, goal_id: str) -> dict | None:
         return next(
@@ -876,23 +877,26 @@ class LearningAgent:
             "content": reply,
         })
 
-        # Step 4: Trim history (same logic as CodingAgent)
-        max_messages = 1 + (MAX_HISTORY_TURNS * 2)
-        if len(self.conversation_history) > max_messages:
+        # Step 4: Trim history — keep newest MAX_HISTORY_TURNS turns
+        max_messages = MAX_HISTORY_TURNS * 2
+        if len(self.conversation_history) - 1 >= max_messages:
             self.conversation_history = (
                 [self.conversation_history[0]]
-                + self.conversation_history[3:]
+                + self.conversation_history[-max_messages:]
             )
 
         # Step 5: Parse and apply any ACTION tokens in the response
         actions = self._parse_actions(reply)
         self._apply_actions(actions)  # also calls _save_profile() if anything changed
 
-        # Step 6: Save (covers cases where no actions fired but history updated)
-        self._save_profile()
+        # Step 6: Save only if no actions fired (actions already saved above)
+        if not actions:
+            self._save_profile()
 
-        # Step 7: Detect handoff and return
+        # Step 7: Detect handoff, reset achievement flag, and return
         handoff = self.detect_handoff(reply)
+        achievement = self._last_achievement
+        self._last_achievement = None
         return reply, handoff
 
     def reset(self) -> None:

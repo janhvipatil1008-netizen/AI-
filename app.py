@@ -50,8 +50,7 @@ today = str(date.today())
 last  = profile.get("last_login", today)
 if last != today:
     try:
-        from datetime import date as _date
-        delta = (_date.today() - _date.fromisoformat(last)).days
+        delta = (date.today() - date.fromisoformat(last)).days
         profile["streak"] = (profile.get("streak", 0) + 1) if delta == 1 else 1
     except Exception:
         profile["streak"] = 1

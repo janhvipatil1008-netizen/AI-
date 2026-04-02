@@ -198,8 +198,14 @@ for doc, score in scores:
 
 # ── Tool implementations ───────────────────────────────────────────────────────
 
-def execute_python(code: str) -> str:
-    """Run Python code in a subprocess with a 10-second timeout."""
+def execute_python(code: str, stdin: str = "") -> str:
+    """Run Python code in a subprocess with a 10-second timeout.
+
+    Args:
+        code:  Python source code to execute.
+        stdin: Optional string to pipe to the process as standard input.
+               Each line corresponds to one input() call in the program.
+    """
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".py", delete=False, encoding="utf-8"
     ) as f:
@@ -211,6 +217,7 @@ def execute_python(code: str) -> str:
             capture_output=True,
             text=True,
             timeout=10,
+            input=stdin or None,   # None = no stdin pipe (original behaviour)
         )
         stdout = result.stdout.strip()
         stderr = result.stderr.strip()
@@ -281,7 +288,7 @@ def tool_executor(tool_name: str, tool_args: dict) -> str:
     Must return a string — the tool result Claude reads next.
     """
     if tool_name == "execute_python":
-        return execute_python(tool_args.get("code", ""))
+        return execute_python(tool_args.get("code", ""), stdin=tool_args.get("stdin", ""))
 
     if tool_name == "check_syntax":
         return check_syntax(tool_args.get("code", ""))

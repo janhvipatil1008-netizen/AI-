@@ -54,11 +54,11 @@ class CodingAgent:
         # Each entry: {"code": str, "output": str}
         self.last_tool_outputs: list[dict] = []
 
-        # conversation_history is the list of messages we send to OpenAI.
+        # conversation_history is the list of messages we send to Claude.
         # It always starts with a "system" message — the secret instruction
         # that tells the AI how to behave.
         #
-        # Format OpenAI expects:
+        # Format Claude expects:
         #   [
         #     {"role": "system",    "content": "You are a tutor..."},
         #     {"role": "user",      "content": "What is a function?"},
@@ -160,9 +160,7 @@ class CodingAgent:
             "content": user_message,
         })
 
-        # Step 2 & 3: Call Claude
-        # Claude requires the system prompt as a separate parameter,
-        # so we strip it from the messages list before sending.
+        # Step 2 & 3: Call Claude (system prompt passed separately, not in messages list)
         system = self.conversation_history[0]["content"]
         messages = [m for m in self.conversation_history if m["role"] != "system"]
         assistant_reply = self.client.chat(messages=messages, system=system)
@@ -176,13 +174,11 @@ class CodingAgent:
         # Step 5: Trim history if it's getting too long
         # We keep: 1 system message + up to MAX_HISTORY_TURNS * 2 other messages
         # Each "turn" = 1 user message + 1 assistant reply = 2 messages
-        max_messages = 1 + (MAX_HISTORY_TURNS * 2)
-        if len(self.conversation_history) > max_messages:
-            # Keep the system message (index 0), drop the oldest user+assistant pair
-            # history[1] and history[2] are the oldest user+assistant pair
+        max_messages = MAX_HISTORY_TURNS * 2
+        if len(self.conversation_history) - 1 > max_messages:
             self.conversation_history = (
-                [self.conversation_history[0]]  # system message
-                + self.conversation_history[3:]  # everything after the oldest pair
+                [self.conversation_history[0]]
+                + self.conversation_history[-max_messages:]
             )
 
         # Step 6: Return the reply
@@ -242,14 +238,52 @@ class CodingAgent:
             "role": "assistant",
             "content": assistant_reply,
         })
-        max_messages = 1 + (MAX_HISTORY_TURNS * 2)
-        if len(self.conversation_history) > max_messages:
+        max_messages = MAX_HISTORY_TURNS * 2
+        if len(self.conversation_history) - 1 > max_messages:
             self.conversation_history = (
                 [self.conversation_history[0]]
-                + self.conversation_history[3:]
+                + self.conversation_history[-max_messages:]
             )
 
         return assistant_reply
+
+    # ── Practice problem evaluation ───────────────────────────────────────────
+
+    def evaluate_solution(self, problem: dict, code: str) -> str:
+        """
+        Grade the learner's code against a practice problem using Claude as judge.
+
+        Responds in a fixed format:
+            SCORE: X/5
+            **What's correct:** ...
+            **Issues or improvements:** ...
+            **One tip:** ...
+
+        A score of 3+ means the core logic is correct (problem marked done).
+        """
+        prompt = (
+            f"Evaluate this Python solution.\n\n"
+            f"Problem: {problem['title']} — {problem['description']}\n"
+            f"Expected output example: {problem['example_out']}\n\n"
+            f"Code:\n```python\n{code}\n```\n\n"
+            "Respond in this EXACT format (no extra text before or after):\n"
+            "SCORE: X/5\n"
+            "**What's correct:** <what the learner did right>\n"
+            "**Issues or improvements:** <specific issues, or 'None' if perfect>\n"
+            "**One tip:** <the single most useful thing they can do next>\n\n"
+            "Scoring guide:\n"
+            "1 = nothing works  2 = partial attempt  3 = core logic correct\n"
+            "4 = correct + good style  5 = idiomatic, clean, edge cases handled\n"
+            "Be honest. Score 3 if the logic is right even if style could improve."
+        )
+        feedback = self.client.chat(
+            messages=[{"role": "user", "content": prompt}],
+            system=self.conversation_history[0]["content"],
+        )
+        # Store evaluation in history so Forge can refer back to it in chat
+        self.conversation_history.append({"role": "user", "content": prompt})
+        self.conversation_history.append({"role": "assistant", "content": feedback})
+        return feedback
 
     # ── Utility methods ───────────────────────────────────────────────────────
 

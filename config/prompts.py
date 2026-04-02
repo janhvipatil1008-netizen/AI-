@@ -129,8 +129,6 @@ CURRICULUM_TOPICS = [
 
 
 def build_learning_system_prompt(profile: dict) -> str:
-    # Import here to avoid circular imports at module level
-    from config.syllabus import ROLE_TRACKS, get_next_tasks, get_progress, get_current_phase_id
     """
     Build a context-rich system prompt for the Learning Management Agent.
 
@@ -149,6 +147,8 @@ def build_learning_system_prompt(profile: dict) -> str:
     Returns:
         A system message string ready to use as history[0].
     """
+    # Import here to avoid circular imports at module level
+    from config.syllabus import ROLE_TRACKS, get_next_tasks, get_progress, get_current_phase_id
     topics = profile.get("topics", {})
     todos = profile.get("todos", [])
 

@@ -218,7 +218,10 @@ class Orchestrator:
         agent = self._get_agent(agent_key, profile)
 
         # Step 3: Call agent.chat() — handle polymorphic return types
-        raw = agent.chat(message)
+        try:
+            raw = agent.chat(message)
+        except Exception as e:
+            return agent_key, f"Something went wrong with {agent_key}: {e}", None
         if isinstance(raw, tuple):
             reply, result = raw
         else:

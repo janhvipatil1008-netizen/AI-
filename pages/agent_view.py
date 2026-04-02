@@ -81,6 +81,20 @@ def _save_profile(p: dict) -> None:
     PROFILE_PATH.write_text(json.dumps(p, indent=2, default=str))
 
 
+def _get_done_ids() -> set:
+    """Return the set of practice problem IDs the learner has already solved."""
+    return set(_load_profile().get("forge_problems_done", []))
+
+
+def _mark_problem_done(problem_id: str) -> None:
+    """Persist a solved problem ID to the learner profile."""
+    p = _load_profile()
+    done = set(p.get("forge_problems_done", []))
+    done.add(problem_id)
+    p["forge_problems_done"] = list(done)
+    _save_profile(p)
+
+
 def _award_xp(amount: int) -> None:
     p = _load_profile()
     p["xp"] = p.get("xp", 0) + amount
@@ -165,6 +179,7 @@ def _forge_code_editor(current_code: str) -> str:
             shortcuts="vscode",
             focus=False,
             allow_reset=True,
+            response_mode="blur",
             key="forge_ace_editor",
             options={"wrap": True, "tabSize": 4},
             props={"style": {"borderRadius": "10px",
@@ -215,10 +230,11 @@ def _render_forge_toolbar(agent) -> None:
             key="forge_tpl_select",
         )
         if chosen != "— template —" and chosen != st.session_state.forge_template_loaded:
-            st.session_state.forge_editor_code   = get_code_template(chosen)
-            st.session_state.forge_template_loaded = chosen
-            st.session_state.forge_output        = ""
-            st.session_state.forge_stderr        = ""
+            st.session_state.forge_editor_code      = get_code_template(chosen)
+            st.session_state.forge_template_loaded  = chosen
+            st.session_state.forge_output           = ""
+            st.session_state.forge_stderr           = ""
+            st.session_state.forge_challenge_active = False
             st.rerun()
 
     with tb3:
@@ -232,6 +248,7 @@ def _render_forge_toolbar(agent) -> None:
         )
         if sel != agent.skill_level:
             agent.set_skill_level(sel)
+            st.session_state.forge_challenge_active = False
 
     with tb4:
         if st.button("🗑 New Chat", key="forge_reset", use_container_width=True):
@@ -243,7 +260,132 @@ def _render_forge_toolbar(agent) -> None:
             st.session_state.forge_last_run_had_error = False
             st.session_state.forge_challenge_active  = False
             st.session_state.forge_template_loaded   = ""
+            st.session_state.forge_practice_problem  = None
             st.rerun()
+
+
+def _render_problem_card(problem: dict, agent) -> None:
+    """Render the active practice problem card inside the tutor panel."""
+    from config.python_curriculum import get_level_progress
+
+    level = problem["level"]
+    done_count, total_count = get_level_progress(level, _get_done_ids())
+
+    level_colors = {
+        "beginner":     ("#A6E3A1", "rgba(166,227,161,0.12)"),
+        "intermediate": ("#89DCEB", "rgba(137,220,235,0.12)"),
+        "advanced":     ("#CBA6F7", "rgba(203,166,247,0.12)"),
+    }
+    badge_color, bg_color = level_colors.get(level, ("#CDD6F4", "rgba(205,214,244,0.08)"))
+
+    st.markdown(
+        f"""<div style="
+            background:{bg_color};
+            border:1px solid {badge_color}44;
+            border-left:3px solid {badge_color};
+            border-radius:12px;
+            padding:14px 16px;
+            margin-bottom:14px;
+        ">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <span style="font-size:11px;font-weight:700;color:{badge_color};
+                         text-transform:uppercase;letter-spacing:0.1em;">
+                {level}
+            </span>
+            <span style="font-size:11px;color:#6C7086;">
+                {problem['concept']} · {done_count}/{total_count} done
+            </span>
+        </div>
+        <div style="font-size:15px;font-weight:700;color:#CDD6F4;margin-bottom:6px;">
+            {problem['title']}
+        </div>
+        <div style="font-size:13px;color:#BAC2DE;line-height:1.6;margin-bottom:10px;">
+            {problem['description']}
+        </div>
+        <div style="background:rgba(14,16,28,0.6);border-radius:8px;padding:10px 12px;
+                    font-family:'JetBrains Mono',monospace;font-size:11px;margin-bottom:4px;">
+            <span style="color:#6C7086;">Input: </span>
+            <span style="color:#89DCEB;">{problem['example_in']}</span><br>
+            <span style="color:#6C7086;">Output: </span>
+            <span style="color:#A6E3A1;">{problem['example_out'].replace(chr(10),' · ')}</span>
+        </div>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+    # Hints
+    with st.expander("💡 Hint 1", expanded=False):
+        st.markdown(f"_{problem['hint1']}_")
+    with st.expander("💡 Hint 2", expanded=False):
+        st.markdown(f"_{problem['hint2']}_")
+
+    # Action buttons
+    col_check, col_skip = st.columns(2, gap="small")
+    with col_check:
+        if st.button("✅ Check My Solution", key="forge_check_solution",
+                     type="primary", use_container_width=True):
+            from utils.code_runner import execute_python
+            code = st.session_state.forge_editor_code.strip()
+            if not code:
+                st.toast("Write your solution in the editor first.", icon="⚠️")
+            else:
+                # Run the code first so the learner sees output, then evaluate
+                with st.spinner("Running your code..."):
+                    run_output = execute_python(code, stdin=st.session_state.get("forge_stdin", ""))
+                # Update output console
+                if run_output.startswith("[stderr]:\n") or run_output.startswith("[Error]:"):
+                    st.session_state.forge_stderr = run_output.lstrip("[stderr]:\n")
+                    st.session_state.forge_output = ""
+                else:
+                    st.session_state.forge_output = run_output
+                    st.session_state.forge_stderr = ""
+
+                with st.spinner("Evaluating..."):
+                    feedback = agent.evaluate_solution(problem, code)
+
+                # Parse score from "SCORE: X/5"
+                score = 0
+                for line in feedback.splitlines():
+                    if line.startswith("SCORE:"):
+                        try:
+                            score = int(line.split(":")[1].strip().split("/")[0])
+                        except (IndexError, ValueError):
+                            pass
+                        break
+
+                st.session_state.fa_messages.append(("assistant", feedback))
+
+                if score >= 3:
+                    _mark_problem_done(problem["id"])
+                    _award_xp(15)
+                    st.session_state.forge_practice_problem = None
+                    st.toast(f"✅ Score {score}/5 — Nice work! +15 XP", icon="🎉")
+
+                    # Check for level completion
+                    from config.python_curriculum import get_level_progress
+                    done_now, total = get_level_progress(problem["level"], _get_done_ids())
+                    if done_now == total:
+                        st.balloons()
+                        st.session_state.fa_messages.append((
+                            "assistant",
+                            f"🏆 **Level complete!** You've finished all {total} "
+                            f"{problem['level']} problems. Try switching to the next level "
+                            "using the skill selector above.",
+                        ))
+                else:
+                    st.toast(f"Score {score}/5 — Keep trying! Check the feedback.", icon="💪")
+
+                st.rerun()
+
+    with col_skip:
+        if st.button("⏭ Skip", key="forge_skip_problem", use_container_width=True):
+            st.session_state.forge_practice_problem = None
+            st.rerun()
+
+    st.markdown(
+        "<div style='border-bottom:1px solid rgba(255,255,255,0.06);margin:10px 0 14px;'></div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _render_tutor_panel(agent) -> None:
@@ -255,6 +397,10 @@ def _render_tutor_panel(agent) -> None:
         'letter-spacing:0.12em;color:#45475A;margin-bottom:12px;">🤖 AI Tutor</div>',
         unsafe_allow_html=True,
     )
+
+    # ── Practice problem card (shown when active) ─────────────────────────────
+    if st.session_state.get("forge_practice_problem"):
+        _render_problem_card(st.session_state.forge_practice_problem, agent)
 
     # ── Quick action buttons (2×2 grid) ──────────────────────────────────────
     qa1, qa2 = st.columns(2, gap="small")
@@ -296,6 +442,18 @@ def _render_tutor_panel(agent) -> None:
                 "using Python and an AI API. Format: task description, expected "
                 "input/output, and one bonus extension. No solution.",
             )
+
+    # Practice button — full width below the 2×2 grid
+    if st.button("📚 Practice", key="forge_qa_practice", use_container_width=True):
+        from config.python_curriculum import get_next_problem
+        problem = get_next_problem(agent.skill_level, _get_done_ids())
+        if problem is None:
+            st.toast("🎉 All problems done for this level! Try a higher skill level.", icon="🏆")
+        else:
+            st.session_state.forge_practice_problem = problem
+            if problem.get("starter"):
+                st.session_state.forge_editor_code = problem["starter"]
+            st.rerun()
 
     st.markdown(
         "<div style='border-bottom:1px solid rgba(255,255,255,0.06);margin:10px 0 14px;'></div>",
@@ -340,8 +498,21 @@ def _render_ide_panel(agent) -> None:
 
     # ── Code editor ───────────────────────────────────────────────────────────
     new_code = _forge_code_editor(st.session_state.forge_editor_code)
-    if new_code is not None:
+    # Only update if the editor returned something non-empty (it returns "" on
+    # first render after a starter-code change, which would wipe the code).
+    if new_code:
         st.session_state.forge_editor_code = new_code
+
+    # ── Program input (stdin) ─────────────────────────────────────────────────
+    with st.expander("⌨️ Program Input (stdin)", expanded=bool(st.session_state.forge_stdin)):
+        st.session_state.forge_stdin = st.text_area(
+            "stdin",
+            value=st.session_state.forge_stdin,
+            height=80,
+            placeholder="Enter input values here, one per line...\ne.g.  25\nhello world",
+            label_visibility="collapsed",
+            key="forge_stdin_area",
+        )
 
     # ── Action buttons ────────────────────────────────────────────────────────
     btn_run, btn_syntax, btn_clear, _ = st.columns([1.5, 2, 1.5, 3], gap="small")
@@ -375,7 +546,7 @@ def _render_ide_panel(agent) -> None:
             st.toast("Write some code first.", icon="⚠️")
         else:
             with st.spinner("Running..."):
-                raw = execute_python(code)
+                raw = execute_python(code, stdin=st.session_state.forge_stdin)
 
             # Parse stdout vs stderr
             if "\n\n[stderr]:\n" in raw:
@@ -485,6 +656,10 @@ def render_forge() -> None:
         st.session_state.forge_challenge_active = False
     if "forge_template_loaded" not in st.session_state:
         st.session_state.forge_template_loaded = ""
+    if "forge_stdin" not in st.session_state:
+        st.session_state.forge_stdin = ""
+    if "forge_practice_problem" not in st.session_state:
+        st.session_state.forge_practice_problem = None
 
     # Graceful migration: remove old mode-based keys if present
     for _k in ("forge_mode", "forge_challenge", "forge_feedback", "forge_tested"):

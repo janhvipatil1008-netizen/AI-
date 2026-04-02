@@ -100,10 +100,7 @@ Papers to choose from:
         # Strip accidental markdown fences if present
         clean = response.strip()
         if clean.startswith("```"):
-            clean = clean.split("```")[1]
-            if clean.startswith("json"):
-                clean = clean[4:]
-            clean = clean.strip()
+            clean = clean.split("```")[1].removeprefix("json").strip()
 
         curated: list[dict] = json.loads(clean)
 
@@ -142,7 +139,7 @@ def _fallback_curate(raw_papers: list[dict]) -> list[dict]:
             "year":           p.get("published", "")[:4],
             "url":            p.get("url", ""),
             "tldr":           (p.get("summary") or "")[:120].rstrip() + "…",
-            "why_it_matters": "",
+            "why_it_matters": "Read the abstract for details.",
             "level":          "intermediate",
         })
     return result

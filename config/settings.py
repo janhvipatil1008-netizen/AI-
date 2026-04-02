@@ -15,13 +15,9 @@ load_dotenv()
 
 # ── API Key ──────────────────────────────────────────────────────────────────
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-if not OPENAI_API_KEY:
-    raise EnvironmentError(
-        "\n\n ERROR: OPENAI_API_KEY is not set.\n"
-        " Create a file named '.env' in the AI² folder and add:\n"
-        "   OPENAI_API_KEY=sk-...your-key-here...\n"
-    )
+# NOTE: Not required for core functionality. Only used by ask_chatgpt() in
+# search_tools.py (Research Agent cross-reference). If missing, that tool
+# returns a graceful error message instead of crashing.
 
 # ── Model ─────────────────────────────────────────────────────────────────────
 # gpt-4o-mini is fast and cheap — great for learning and iteration.
