@@ -298,14 +298,15 @@ class PracticeAgent:
         msg_type = data.get("type", "")
 
         if msg_type == "question":
-            # Format: question number + question text + A/B/C/D options
+            # Format: question number + question text + A/B/C/D options (vertical)
             qn = data.get("question_number", "?")
             q = data.get("question", "")
             opts = data.get("options", {})
             lines = [f"**Question {qn}**", "", q, ""]
             for letter in ["A", "B", "C", "D"]:
                 if letter in opts:
-                    lines.append(f"{letter}) {opts[letter]}")
+                    lines.append(f"**{letter})** {opts[letter]}")
+                    lines.append("")   # blank line forces vertical rendering in markdown
             return "\n".join(lines)
 
         elif msg_type == "grade":

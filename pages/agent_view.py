@@ -1406,10 +1406,10 @@ def render_dojo() -> None:
             with st.chat_message("assistant"):
                 st.markdown(
                     "👋 Hi! I'm **Dojo**, your practice arena.\n\n"
-                    "**🎯 Quiz** — 5 multiple-choice questions on a topic.\n\n"
-                    "**💻 Coding Challenge** — A real task with code review.\n\n"
-                    "**🤝 Mock Interview** — AI Builder or AI PM interview.\n\n"
-                    "**Pick a mode and click Start!**"
+                    "**🎯 Quiz** — 10 multiple-choice questions on any topic you choose.\n\n"
+                    "**💻 Coding Challenge** — A real task with AI code review.\n\n"
+                    "**🤝 Mock Interview** — AI Builder or AI PM interview prep.\n\n"
+                    "**Type a topic, pick a difficulty, and click Start!**"
                 )
 
         for role, content in st.session_state.da_messages:
