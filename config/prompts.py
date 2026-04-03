@@ -401,7 +401,8 @@ def build_practice_system_prompt(
     mode: str,
     topic: str = "",
     role: str = "AI Builder",
-    num_questions: int = 5,
+    num_questions: int = 10,
+    difficulty: str = "Intermediate",
 ) -> str:
     """
     Build a system prompt for the Practice Agent based on the selected mode.
@@ -437,6 +438,24 @@ You are part of the AI² learning platform. The curriculum covers:
 {CURRICULUM}
 Stay on topic. Only ask about skills directly relevant to the curriculum above.
 """
+
+    # ── Difficulty instructions (injected into quiz + interview) ─────────────
+    _difficulty_instructions = {
+        "Beginner": (
+            "Difficulty: Beginner — focus on definitions, core concepts, and simple recall. "
+            "Questions should check whether the learner understands what something is and why it exists."
+        ),
+        "Intermediate": (
+            "Difficulty: Intermediate — focus on application and trade-offs. "
+            "Questions should check whether the learner can apply concepts to realistic scenarios "
+            "and explain when to use one approach over another."
+        ),
+        "Advanced": (
+            "Difficulty: Advanced — focus on design decisions, edge cases, and nuanced trade-offs. "
+            "Questions should challenge the learner to reason about system-level consequences, "
+            "failure modes, and multi-step problem solving."
+        ),
+    }.get(difficulty, "Difficulty: Intermediate — test application of knowledge, not just definitions.")
 
     # ═════════════════════════════════════════════════════════════════════════
     # QUIZ MODE
@@ -485,7 +504,7 @@ Rules:
 3. Accept any reasonable answer format: "B", "option B", "the second one", "b".
 4. After question {num_questions}, set "session_complete": true in the grade json.
 5. Do not repeat questions within a session.
-6. Difficulty: intermediate — test application of knowledge, not just definitions.
+6. {_difficulty_instructions}
 """
         return role_section + format_section + curriculum_context + rules_section
 
@@ -577,6 +596,8 @@ FORMAT:
   Strengths: [2-3 bullet points]
   Areas to develop: [1-2 bullet points]
   Overall: [one sentence recommendation]
+
+{_difficulty_instructions}
 """
 
         rules_section = f"""

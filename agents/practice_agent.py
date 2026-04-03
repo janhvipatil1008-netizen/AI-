@@ -79,8 +79,9 @@ class PracticeAgent:
 
         # Current session configuration — changed via setters
         self.mode: str = "quiz"
-        self.topic: str = CURRICULUM_TOPICS[0]
+        self.topic: str = ""
         self.role: str = "AI Builder"
+        self.difficulty: str = "Intermediate"
 
         # Session state
         self.session_active: bool = False
@@ -109,6 +110,10 @@ class PracticeAgent:
         """Set the target role for interview mode: 'AI Builder' or 'AI PM'."""
         self.role = role
 
+    def set_difficulty(self, difficulty: str) -> None:
+        """Set difficulty level: 'Beginner' | 'Intermediate' | 'Advanced'."""
+        self.difficulty = difficulty
+
     # ── Session lifecycle ─────────────────────────────────────────────────────
 
     def start_session(self) -> str:
@@ -131,6 +136,8 @@ class PracticeAgent:
             mode=self.mode,
             topic=self.topic,
             role=self.role,
+            difficulty=self.difficulty,
+            num_questions=10,
         )
         prompt += "\n\n" + load_combined_skill("practice")
 
@@ -528,6 +535,8 @@ class PracticeAgent:
         self.conversation_history = []
         self.session_active = False
         self.current_session = {}
+        self.topic = ""
+        self.difficulty = "Intermediate"
 
     def get_history(self) -> list[dict]:
         """Return the current conversation history."""

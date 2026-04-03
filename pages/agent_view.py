@@ -1261,7 +1261,6 @@ def render_atlas() -> None:
 
 def render_dojo() -> None:
     from agents.practice_agent import PracticeAgent
-    from config.syllabus import get_all_tasks_for_roles
 
     if "dojo_agent" not in st.session_state:
         st.session_state.dojo_agent = PracticeAgent()
@@ -1275,17 +1274,6 @@ def render_dojo() -> None:
         st.session_state.da_pending_mode = None
 
     agent = st.session_state.dojo_agent
-
-    # ── Build dynamic topic list from syllabus (filtered to learner's roles) ──
-    GENERAL_TOPIC   = "General / No specific topic"
-    _profile        = _load_profile()
-    _selected_roles = _profile.get("selected_roles", ["aipm", "evals", "context"])
-    _syllabus_prog  = _profile.get("syllabus_progress", {})
-    _all_tasks      = get_all_tasks_for_roles(_selected_roles, _syllabus_prog)
-    _topic_labels   = [GENERAL_TOPIC] + [t["label"] for t in _all_tasks]
-    _label_to_text  = {GENERAL_TOPIC: GENERAL_TOPIC}
-    _label_to_text.update({t["label"]: t["text"] for t in _all_tasks})
-
     ctrl, chat = st.columns([2, 5], gap="medium")
 
     with ctrl:
@@ -1332,20 +1320,30 @@ def render_dojo() -> None:
             agent.set_mode(sel_mode)
 
         st.markdown('<div class="ctrl-label" style="margin-top:12px;">Topic</div>', unsafe_allow_html=True)
-        _reverse_map   = {v: k for k, v in _label_to_text.items()}
-        _current_label = _reverse_map.get(agent.topic, GENERAL_TOPIC)
-        _current_idx   = _topic_labels.index(_current_label) if _current_label in _topic_labels else 0
-        topic_label = st.selectbox(
+        topic = st.text_input(
             "topic",
-            _topic_labels,
-            index=_current_idx,
+            value=agent.topic if agent.topic else "",
+            placeholder="e.g. RAG systems, prompt engineering, LLM evals…",
             label_visibility="collapsed",
             key="dojo_topic",
-            help="Pick any syllabus topic, filtered to your selected roles.",
+            disabled=agent.session_active,
         )
-        topic = _label_to_text.get(topic_label, GENERAL_TOPIC)
         if not agent.session_active:
             agent.set_topic(topic)
+
+        st.markdown('<div class="ctrl-label" style="margin-top:12px;">Difficulty</div>', unsafe_allow_html=True)
+        difficulty_opts = ["Beginner", "Intermediate", "Advanced"]
+        difficulty = st.radio(
+            "difficulty",
+            difficulty_opts,
+            index=difficulty_opts.index(agent.difficulty) if agent.difficulty in difficulty_opts else 1,
+            label_visibility="collapsed",
+            key="dojo_difficulty",
+            horizontal=True,
+            disabled=agent.session_active,
+        )
+        if not agent.session_active:
+            agent.set_difficulty(difficulty)
 
         st.markdown('<div class="ctrl-label" style="margin-top:12px;">Target role</div>', unsafe_allow_html=True)
         role = st.radio(
@@ -1363,6 +1361,7 @@ def render_dojo() -> None:
             agent.reset()
             agent.set_mode(sel_mode)
             agent.set_topic(topic)
+            agent.set_difficulty(difficulty)
             agent.set_role(role)
             with st.spinner("Setting up..."):
                 opening = agent.start_session()
@@ -1395,13 +1394,11 @@ def render_dojo() -> None:
 
     with chat:
         if agent.session_active:
-            _topic_display = agent.topic if agent.topic != GENERAL_TOPIC else "General"
-            if len(_topic_display) > 55:
-                _topic_display = _topic_display[:52] + "…"
+            _topic_display = agent.topic[:45] + "…" if len(agent.topic) > 45 else agent.topic or "General"
             badge = {
-                "quiz":      f"🎯 Quiz — {_topic_display}",
-                "challenge": f"💻 Challenge — {_topic_display}",
-                "interview": f"🤝 Interview — {agent.role} | {_topic_display}",
+                "quiz":      f"🎯 Quiz — {agent.difficulty} — {_topic_display}",
+                "challenge": f"💻 Challenge — {agent.difficulty} — {_topic_display}",
+                "interview": f"🤝 Interview — {agent.role} — {agent.difficulty} — {_topic_display}",
             }.get(agent.mode, "")
             st.info(badge)
 
