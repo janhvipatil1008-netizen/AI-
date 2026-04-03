@@ -498,6 +498,49 @@ def get_current_phase_id(syllabus_progress: dict, selected_roles: list[str]) -> 
     return PHASES[-1]["id"]
 
 
+def get_all_tasks_for_roles(
+    selected_roles: list[str],
+    syllabus_progress: dict | None = None,
+) -> list[dict]:
+    """
+    Return every task relevant to the given roles, in syllabus order.
+    Optionally annotates each task with its completion status.
+
+    Each returned item has:
+        key, phase_num, phase_title, track_name, text, status, roles, label
+
+    The 'label' field is pre-formatted for st.selectbox:
+        "Phase 1 › AI Fundamentals › Write 1-page explainers: AI vs ML…"
+    Long task text is truncated to 72 characters.
+    """
+    if syllabus_progress is None:
+        syllabus_progress = {}
+    results = []
+    for phase in PHASES:
+        for ti, track in enumerate(phase["tracks"]):
+            if not any(r in selected_roles for r in track["roles"]):
+                continue
+            for taski, task in enumerate(track["tasks"]):
+                if not any(r in selected_roles for r in task["roles"]):
+                    continue
+                key = get_task_key(phase["id"], ti, taski)
+                status = syllabus_progress.get(key, "todo")
+                text = task["text"]
+                short_text = text if len(text) <= 72 else text[:69] + "…"
+                label = f"{phase['phase']} › {track['name']} › {short_text}"
+                results.append({
+                    "key":         key,
+                    "phase_num":   phase["phase"],
+                    "phase_title": phase["title"],
+                    "track_name":  track["name"],
+                    "text":        text,
+                    "status":      status,
+                    "roles":       task["roles"],
+                    "label":       label,
+                })
+    return results
+
+
 def get_next_tasks(
     syllabus_progress: dict,
     selected_roles: list[str],

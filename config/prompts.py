@@ -537,10 +537,15 @@ Rules:
     # MOCK INTERVIEW MODE
     # ═════════════════════════════════════════════════════════════════════════
     else:  # interview
+        _topic_line = (
+            f"Focus all questions on this specific area:\n  \"{topic}\"\n"
+            if topic and topic != "General / No specific topic"
+            else ""
+        )
         role_section = f"""You are a professional interviewer at a top AI company, hiring for the role of {role}.
 Your job is to conduct a realistic mock interview with {num_questions} questions.
 Be professional, honest, and give useful feedback after each answer.
-"""
+{_topic_line}"""
 
         if role == "AI PM":
             question_areas = """

@@ -1261,7 +1261,7 @@ def render_atlas() -> None:
 
 def render_dojo() -> None:
     from agents.practice_agent import PracticeAgent
-    from config.prompts import CURRICULUM_TOPICS
+    from config.syllabus import get_all_tasks_for_roles
 
     if "dojo_agent" not in st.session_state:
         st.session_state.dojo_agent = PracticeAgent()
@@ -1275,6 +1275,17 @@ def render_dojo() -> None:
         st.session_state.da_pending_mode = None
 
     agent = st.session_state.dojo_agent
+
+    # ── Build dynamic topic list from syllabus (filtered to learner's roles) ──
+    GENERAL_TOPIC   = "General / No specific topic"
+    _profile        = _load_profile()
+    _selected_roles = _profile.get("selected_roles", ["aipm", "evals", "context"])
+    _syllabus_prog  = _profile.get("syllabus_progress", {})
+    _all_tasks      = get_all_tasks_for_roles(_selected_roles, _syllabus_prog)
+    _topic_labels   = [GENERAL_TOPIC] + [t["label"] for t in _all_tasks]
+    _label_to_text  = {GENERAL_TOPIC: GENERAL_TOPIC}
+    _label_to_text.update({t["label"]: t["text"] for t in _all_tasks})
+
     ctrl, chat = st.columns([2, 5], gap="medium")
 
     with ctrl:
@@ -1320,16 +1331,21 @@ def render_dojo() -> None:
         elif not agent.session_active:
             agent.set_mode(sel_mode)
 
-        if agent.mode in ("quiz", "challenge"):
-            st.markdown('<div class="ctrl-label" style="margin-top:12px;">Topic</div>', unsafe_allow_html=True)
-            topic = st.selectbox(
-                "topic", CURRICULUM_TOPICS,
-                index=CURRICULUM_TOPICS.index(agent.topic) if agent.topic in CURRICULUM_TOPICS else 0,
-                label_visibility="collapsed",
-                key="dojo_topic",
-            )
-            if not agent.session_active:
-                agent.set_topic(topic)
+        st.markdown('<div class="ctrl-label" style="margin-top:12px;">Topic</div>', unsafe_allow_html=True)
+        _reverse_map   = {v: k for k, v in _label_to_text.items()}
+        _current_label = _reverse_map.get(agent.topic, GENERAL_TOPIC)
+        _current_idx   = _topic_labels.index(_current_label) if _current_label in _topic_labels else 0
+        topic_label = st.selectbox(
+            "topic",
+            _topic_labels,
+            index=_current_idx,
+            label_visibility="collapsed",
+            key="dojo_topic",
+            help="Pick any syllabus topic, filtered to your selected roles.",
+        )
+        topic = _label_to_text.get(topic_label, GENERAL_TOPIC)
+        if not agent.session_active:
+            agent.set_topic(topic)
 
         st.markdown('<div class="ctrl-label" style="margin-top:12px;">Target role</div>', unsafe_allow_html=True)
         role = st.radio(
@@ -1346,8 +1362,7 @@ def render_dojo() -> None:
         if st.button(f"▶ Start {mode_label}", key="dojo_start", use_container_width=True, type="primary"):
             agent.reset()
             agent.set_mode(sel_mode)
-            if agent.mode in ("quiz", "challenge"):
-                agent.set_topic(topic)
+            agent.set_topic(topic)
             agent.set_role(role)
             with st.spinner("Setting up..."):
                 opening = agent.start_session()
@@ -1380,10 +1395,13 @@ def render_dojo() -> None:
 
     with chat:
         if agent.session_active:
+            _topic_display = agent.topic if agent.topic != GENERAL_TOPIC else "General"
+            if len(_topic_display) > 55:
+                _topic_display = _topic_display[:52] + "…"
             badge = {
-                "quiz":      f"🎯 Quiz — {agent.topic}",
-                "challenge": f"💻 Challenge — {agent.topic}",
-                "interview": f"🤝 Interview — {agent.role}",
+                "quiz":      f"🎯 Quiz — {_topic_display}",
+                "challenge": f"💻 Challenge — {_topic_display}",
+                "interview": f"🤝 Interview — {agent.role} | {_topic_display}",
             }.get(agent.mode, "")
             st.info(badge)
 
