@@ -4,7 +4,7 @@ practice_agent.py — The Practice Agent for the AI² platform (Step 4).
 WHAT THIS AGENT DOES:
 ----------------------
 Assesses the learner's knowledge through three modes:
-  - Quiz:              Multiple-choice questions on a curriculum topic
+  - Quiz:              Multiple-choice questions on any AI topic
   - Coding Challenge:  A small coding task with AI-powered code review
   - Mock Interview:    A realistic interview simulation for AI Builder or AI PM roles
 
@@ -49,9 +49,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from config.settings import MAX_HISTORY_TURNS
-from config.prompts import CURRICULUM_TOPICS, build_practice_system_prompt
+from config.prompts import build_practice_system_prompt
 from utils.claude_client import ClaudeClient
 from utils.skills_loader import load_combined_skill
+from utils.browser_tools import search_and_browse
 
 
 class PracticeAgent:
@@ -65,7 +66,7 @@ class PracticeAgent:
         agent.set_topic("Prompt engineering and LLM best practices")
         opening = agent.start_session()   # returns the first question
 
-        reply, result = agent.chat("B")   # answer a quiz question
+        replies, result = agent.chat("B")  # answer a quiz question → [grade, next_q]
         if result:
             print(result["correct"])      # True or False
             if result["session_complete"]:
@@ -73,6 +74,7 @@ class PracticeAgent:
     """
 
     HISTORY_PATH = "data/practice_history.json"
+    DEFAULT_TOPIC_LABEL = "All AI topics"
 
     def __init__(self) -> None:
         self.client = ClaudeClient()
@@ -103,8 +105,8 @@ class PracticeAgent:
         self.mode = mode
 
     def set_topic(self, topic: str) -> None:
-        """Set the curriculum topic for quiz and challenge modes."""
-        self.topic = topic
+        """Set the practice topic for the current session."""
+        self.topic = (topic or "").strip()
 
     def set_role(self, role: str) -> None:
         """Set the target role for interview mode: 'AI Builder' or 'AI PM'."""
@@ -163,7 +165,7 @@ class PracticeAgent:
         self.current_session = {
             "id": f"session_{int(time.time())}",
             "mode": self.mode,
-            "topic": self.topic if self.mode != "interview" else None,
+            "topic": self.get_topic_label(),
             "role": self.role if self.mode == "interview" else None,
             "started_at": now,
             "ended_at": None,
@@ -200,14 +202,34 @@ class PracticeAgent:
         self._save_history()
         self.session_active = False
 
+    # ── Tool execution ────────────────────────────────────────────────────────
+
+    def _execute_tool(self, tool_name: str, tool_args: dict) -> str:
+        """
+        Route browser tool calls from the ReAct loop.
+
+        Dojo has search_and_browse so it can source real interview questions,
+        current AI job requirements, and fresh assessment content.
+        """
+        if tool_name == "search_and_browse":
+            return search_and_browse(tool_args.get("query", ""), tool_args.get("max_pages", 2))
+        return json.dumps({"error": f"Unknown tool: {tool_name}"})
+
     # ── Core chat ─────────────────────────────────────────────────────────────
 
-    def chat(self, user_message: str) -> tuple[str, dict | None]:
+    def chat(self, user_message: str) -> tuple[list[str], dict | None]:
         """
         Send a learner response and get back the AI's reply.
 
-        Returns a tuple — same pattern as LearningAgent.chat():
-            (reply_text, result_dict_or_None)
+        Returns a tuple:
+            (replies, result_dict_or_None)
+
+        replies is a list of one or two formatted strings:
+          - One item:  a question, or a grade when the session is complete
+          - Two items: [grade_text, next_question_text] — the common case mid-quiz
+
+        Splitting grade and question into separate list items lets the page
+        render them as distinct chat bubbles rather than one combined message.
 
         result_dict is non-None when the AI has evaluated an answer:
             {
@@ -220,24 +242,25 @@ class PracticeAgent:
         When session_complete=True, end_session() is called automatically
         so the history file is updated before the page re-renders.
 
-        WHY a tuple:
-        The page needs to know immediately when an answer was graded so it
-        can show the correct/incorrect callout and update the stats panel.
-        Returning the result alongside the text is the cleanest way to do this.
-
         Args:
             user_message: What the learner typed.
 
         Returns:
-            (formatted_reply, result_dict_or_None)
+            (replies_list, result_dict_or_None)
         """
         # Step 1: Add user message
         self.conversation_history.append({"role": "user", "content": user_message})
 
-        # Step 2: Call Claude — system prompt instructs JSON output for quiz mode
+        # Step 2: Call Claude — system prompt instructs JSON output for quiz mode.
+        # chat_with_tools() is used so Dojo can search_and_browse for real questions.
         system = self.conversation_history[0]["content"]
         messages = [m for m in self.conversation_history if m["role"] != "system"]
-        raw_reply = self.client.chat(messages=messages, system=system)
+        raw_reply = self.client.chat_with_tools(
+            messages=messages,
+            system=system,
+            agent_name="practice",
+            tool_executor=self._execute_tool,
+        )
 
         # Step 3: Add to history
         self.conversation_history.append({"role": "assistant", "content": raw_reply})
@@ -250,10 +273,23 @@ class PracticeAgent:
                 + self.conversation_history[-(MAX_HISTORY_TURNS * 2):]
             )
 
-        # Step 5: Parse the reply
-        data = self._parse_json_response(raw_reply)
-        formatted = self._format_reply(raw_reply, data)
-        result = self._extract_result(raw_reply, data)
+        # Step 5: Parse the reply — Claude may send grade + next question as two
+        # separate JSON objects in one response; return them as separate items so
+        # the page can render each as its own chat bubble.
+        all_data = self._extract_all_json(raw_reply)
+
+        if len(all_data) >= 2:
+            grade_data = all_data[0]
+            question_data = all_data[1]
+            replies = [
+                self._format_reply("", grade_data),
+                self._format_reply("", question_data),
+            ]
+            result = self._extract_result(raw_reply, grade_data)
+        else:
+            data = all_data[0] if all_data else self._parse_json_response(raw_reply)
+            replies = [self._format_reply(raw_reply, data)]
+            result = self._extract_result(raw_reply, data)
 
         # Step 6: Record the result and end session if complete
         if result and self.current_session:
@@ -261,7 +297,7 @@ class PracticeAgent:
             if result.get("session_complete"):
                 self.end_session()
 
-        return formatted, result
+        return replies, result
 
     # ── Reply formatting ──────────────────────────────────────────────────────
 
@@ -320,6 +356,27 @@ class PracticeAgent:
         return raw_reply
 
     # ── JSON and score parsing helpers ────────────────────────────────────────
+
+    def _extract_all_json(self, text: str) -> list[dict]:
+        """Extract every top-level JSON object found in text (handles multi-object responses)."""
+        results = []
+        depth = 0
+        start = -1
+        for i, ch in enumerate(text):
+            if ch == '{':
+                if depth == 0:
+                    start = i
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0 and start != -1:
+                    chunk = text[start:i + 1]
+                    try:
+                        results.append(json.loads(chunk))
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+                    start = -1
+        return results
 
     def _parse_json_response(self, text: str) -> dict | None:
         """
@@ -532,12 +589,29 @@ class PracticeAgent:
     # ── Standard interface ────────────────────────────────────────────────────
 
     def reset(self) -> None:
-        """Clear the current conversation and session state."""
+        """Clear the current conversation and session state, preserving selections."""
         self.conversation_history = []
         self.session_active = False
         self.current_session = {}
-        self.topic = ""
-        self.difficulty = "Intermediate"
+
+    def get_topic_label(self) -> str:
+        """Return a user-facing label for the active topic selection."""
+        return self.topic or self.DEFAULT_TOPIC_LABEL
+
+    @property
+    def current_question_num(self) -> int | None:
+        """
+        Return the 1-based index of the current question in a quiz session.
+        Returns None if not in a quiz session.
+        Counts user turns in conversation history (each user message = one answer).
+        """
+        if not self.session_active or self.mode != "quiz":
+            return None
+        user_turns = sum(
+            1 for msg in self.conversation_history
+            if msg.get("role") == "user"
+        )
+        return min(user_turns, 10)  # cap at max_questions
 
     def get_history(self) -> list[dict]:
         """Return the current conversation history."""

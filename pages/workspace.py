@@ -43,6 +43,7 @@ from pathlib import Path
 
 import streamlit as st
 from utils.ui_theme import inject_css, inject_welcome_css
+from utils.ui_helpers import show_xp_toast
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -59,17 +60,6 @@ st.markdown("""
 <style>
 [data-testid="stSidebar"]   { display: none !important; }
 [data-testid="collapsedControl"] { display: none !important; }
-/* Primary buttons = active/selected state (nav tabs, skill cards, start buttons) */
-.stButton > button[kind="primary"] {
-    background: rgba(137, 220, 235, 0.10) !important;
-    border: 1px solid rgba(137,220,235,0.45) !important;
-    color: #89DCEB !important;
-    box-shadow: 0 0 12px rgba(137,220,235,0.12) !important;
-}
-.stButton > button[kind="primary"]:hover {
-    background: rgba(137, 220, 235, 0.18) !important;
-    box-shadow: 0 0 18px rgba(137,220,235,0.2) !important;
-}
 /* Remove column divider in header — it looks odd for nav */
 .ws-header-cols [data-testid="column"] + [data-testid="column"] {
     border-left: none !important;
@@ -155,17 +145,16 @@ streak    = st.session_state.get("_ws_streak", profile.get("streak", 1))
 initial   = user_name[0].upper() if user_name else "?"
 
 AGENTS_META = [
-    ("forge",    "💻", "Forge"),
     ("atlas",    "🧭", "Atlas"),
     ("dojo",     "🎯", "Dojo"),
     ("spark",    "💡", "Spark"),
     ("syllabus", "📋", "Syllabus"),
 ]
 
-# Header row: [logo(1.5)] [5 nav buttons] [user pill(2)]
+# Header row: [logo(1.5)] [4 nav buttons] [user pill(2)]
 st.markdown('<div class="ws-header-cols">', unsafe_allow_html=True)
-h_logo, h_nav1, h_nav2, h_nav3, h_nav4, h_nav5, h_user = st.columns(
-    [1.5, 1.1, 1.1, 1.1, 1.1, 1.3, 2.0]
+h_logo, h_nav1, h_nav2, h_nav3, h_nav4, h_user = st.columns(
+    [1.5, 1.2, 1.2, 1.2, 1.4, 2.0]
 )
 st.markdown('</div>', unsafe_allow_html=True)
 
@@ -174,7 +163,7 @@ with h_logo:
         st.session_state.active_agent = None
         st.rerun()
 
-nav_cols = [h_nav1, h_nav2, h_nav3, h_nav4, h_nav5]
+nav_cols = [h_nav1, h_nav2, h_nav3, h_nav4]
 for col, (agent_key, icon, label) in zip(nav_cols, AGENTS_META):
     with col:
         if st.button(
@@ -240,11 +229,24 @@ def render_dashboard() -> None:
     # Quick stats
     s1, s2, s3, s4 = st.columns(4, gap="small")
     stats = [
-        (s1, str(completed),     "Topics Complete",   "#89DCEB"),
         (s2, f"{pct}%",          "Curriculum Done",   "#A78BFA"),
         (s3, str(xp),            "XP Earned",         "#FBBF24"),
         (s4, str(ideas_count),   "Ideas Saved",        "#F472B6"),
     ]
+    # Topics Complete — clickable, navigates to Syllabus
+    with s1:
+        st.markdown(
+            f"""
+            <div class="dash-stat" style="border-top-color:#89DCEB;">
+                <div class="dash-stat-val" style="color:#89DCEB;">{completed}</div>
+                <div class="dash-stat-lbl">Topics Complete</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if st.button("View Roadmap →", key="ws_stat_syllabus", use_container_width=True):
+            st.session_state.active_agent = "syllabus"
+            st.switch_page("pages/agent_view.py")
     for col, val, lbl, color in stats:
         with col:
             st.markdown(
@@ -277,7 +279,6 @@ def render_dashboard() -> None:
 
     # Agent badge styling: (icon, color, display name)
     _AGENT_BADGE = {
-        "forge": ("💻", "#4A9EFF", "Forge — Coding Tutor"),
         "atlas": ("🧭", "#A78BFA", "Atlas — Learning Coach"),
         "dojo":  ("🎯", "#FBBF24", "Dojo — Practice Arena"),
         "spark": ("💡", "#F472B6", "Spark — Idea Generator"),
@@ -323,13 +324,16 @@ def render_dashboard() -> None:
 
         st.session_state.orch_messages.append((agent_key, "assistant", display))
 
-        # XP awards — same logic as individual agent views
+        # XP awards — show toast so the user sees why they earned XP
         _award_xp(5)
+        show_xp_toast(5, "for chatting")
         if result and isinstance(result, dict):
             if result.get("correct") is True:   # correct quiz answer
                 _award_xp(10)
+                show_xp_toast(10, "correct answer!")
             if result.get("idea_saved"):         # Spark saved an idea
                 _award_xp(20)
+                show_xp_toast(20, "idea saved")
 
         st.rerun()
 

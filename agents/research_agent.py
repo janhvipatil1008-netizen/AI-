@@ -36,6 +36,7 @@ import json
 from config.settings import MAX_HISTORY_TURNS
 from config.prompts import build_research_system_prompt
 from utils.search_tools import search_web, search_wikipedia, search_arxiv
+from utils.browser_tools import browse_url, search_and_browse
 from utils.claude_client import ClaudeClient
 from utils.skills_loader import load_combined_skill
 
@@ -133,6 +134,12 @@ class ResearchAgent:
             query = args.get("query", "")
             max_results = args.get("max_results", 5)
             return search_arxiv(query, max_results)
+
+        elif name == "browse_url":
+            return browse_url(args.get("url", ""), args.get("question", ""))
+
+        elif name == "search_and_browse":
+            return search_and_browse(args.get("query", ""), args.get("max_pages", 2))
 
         else:
             return f"Unknown tool: {name}"

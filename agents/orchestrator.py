@@ -6,12 +6,12 @@ HOW IT WORKS (step by step):
 1. classify()
    Sends ONE fast claude-haiku call (temperature=0, max_tokens=10).
    The prompt describes each agent's job and the learner's current context.
-   Returns a single word: forge | atlas | dojo | spark.
+   Returns a single word: atlas | dojo | spark.
    Cost: ~$0.0001 per message routed.
 
 2. _get_agent()
    Lazy-loads agent instances on first use and caches them in self._agents{}.
-   This means Forge, Atlas, Dojo, and Spark each maintain their own
+   This means Atlas, Dojo, and Spark each maintain their own
    conversation history across all messages in the session.
 
 3. chat()
@@ -26,11 +26,10 @@ HOW IT WORKS (step by step):
    This is how Atlas can say "go practice this in Dojo" and actually make it happen.
 
 WHY NO CHANGES TO INDIVIDUAL AGENTS:
-   CodingAgent.chat()   → returns str         (normalised to (str, None))
    LearningAgent.chat() → returns (str, dict) (result = handoff or None)
-   PracticeAgent.chat() → returns (str, dict) (result = quiz/score result)
+   PracticeAgent.chat() → returns (list[str], dict) (result = quiz/score result)
    IdeaAgent.chat()     → returns (str, dict) (result = save notification)
-   The orchestrator handles all 4 return shapes transparently.
+   The orchestrator handles all return shapes transparently.
 """
 
 import json
@@ -41,15 +40,13 @@ from utils.claude_client import ClaudeClient
 PROFILE_PATH = Path("data/learning_profile.json")
 
 # ── Classification prompt ──────────────────────────────────────────────────────
-# WHY: We give the AI exactly 4 choices with clear, non-overlapping examples.
-# "Last agent used" helps the classifier maintain conversational continuity
-# (e.g. a follow-up after a Forge answer is likely still a Forge question).
+# WHY: We give the AI exactly 3 choices with clear, non-overlapping examples.
+# "Last agent used" helps the classifier maintain conversational continuity.
 
 _CLASSIFY_PROMPT = """You are a router for the AI² learning platform.
-Route the learner's message to one of these 4 agents:
+Route the learner's message to one of these 3 agents:
 
-forge  — coding help, debugging, "how do I implement X", Python errors, code review, syntax questions
-atlas  — study planning, "what should I learn next", progress tracking, goal setting, topic explanation, research a concept
+atlas  — study planning, "what should I learn next", progress tracking, goal setting, topic explanation, research a concept, coding concepts explained
 dojo   — "quiz me", "test my knowledge", practice exercises, mock interview, coding challenge, "how well do I know X"
 spark  — "give me project ideas", brainstorming, "what should I build", project planning, project feedback
 
@@ -60,12 +57,11 @@ Context:
 
 Learner message: "{message}"
 
-Respond with ONLY one word (no punctuation, no explanation): forge | atlas | dojo | spark"""
+Respond with ONLY one word (no punctuation, no explanation): atlas | dojo | spark"""
 
 # ── Handoff prefix → target agent ─────────────────────────────────────────────
 # Any agent can emit "HANDOFF: DOJO | topic" to pre-route the next message.
 _HANDOFF_PREFIXES = {
-    "HANDOFF: FORGE":    "forge",
     "HANDOFF: ATLAS":    "atlas",
     "HANDOFF: DOJO":     "dojo",
     "HANDOFF: SPARK":    "spark",
@@ -114,10 +110,7 @@ class Orchestrator:
         """
         if key not in self._agents:
             skill = profile.get("skill_level", "beginner")
-            if key == "forge":
-                from agents.coding_agent import CodingAgent
-                self._agents[key] = CodingAgent(skill_level=skill)
-            elif key == "atlas":
+            if key == "atlas":
                 from agents.learning_agent import LearningAgent
                 self._agents[key] = LearningAgent()
             elif key == "dojo":
@@ -159,7 +152,7 @@ class Orchestrator:
         ).strip().lower()
 
         # Validate — fall back to atlas if haiku returns something unexpected
-        return result if result in ("forge", "atlas", "dojo", "spark") else "atlas"
+        return result if result in ("atlas", "dojo", "spark") else "atlas"
 
     # ── Handoff detection ─────────────────────────────────────────────────────
 
@@ -188,10 +181,10 @@ class Orchestrator:
         Returns:
             (agent_key, display_text, result)
 
-            agent_key:    "forge" | "atlas" | "dojo" | "spark"
+            agent_key:    "atlas" | "dojo" | "spark"
             display_text: Clean markdown ready to show the user.
                           ACTION: and HANDOFF: lines are stripped out.
-            result:       None for Forge/Atlas chat,
+            result:       None for Atlas chat,
                           or the structured result dict from Dojo/Spark.
                           - Dojo: {"correct": bool, "score": int, "session_complete": bool, ...}
                           - Spark: {"idea_saved": True, "idea": {...}} or None
@@ -227,6 +220,11 @@ class Orchestrator:
         else:
             reply, result = raw, None
 
+        # PracticeAgent returns a list of strings (grade + next question as
+        # separate items); flatten to a single string for the orchestrator display.
+        if isinstance(reply, list):
+            reply = "\n\n---\n\n".join(reply)
+
         # Step 4: Strip internal tokens from what the user sees
         display = "\n".join(
             line for line in reply.splitlines()
@@ -238,6 +236,7 @@ class Orchestrator:
 
         # Step 6: Track and return
         self._last_agent = agent_key
+        print(f"[router] → {agent_key}")  # visible in Streamlit server logs
         return agent_key, display, result
 
     # ── Utility ───────────────────────────────────────────────────────────────

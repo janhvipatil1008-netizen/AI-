@@ -20,6 +20,7 @@ import streamlit as st
 from agents.learning_agent import LearningAgent
 from config.prompts import CURRICULUM_TOPICS
 from utils.ui_theme import inject_css
+from utils.ui_helpers import safe_agent_chat, contextual_spinner
 
 # ── Page configuration ────────────────────────────────────────────────────────
 st.set_page_config(
@@ -158,6 +159,7 @@ with left_col:
         submitted = st.form_submit_button("Add", use_container_width=True)
         if submitted and new_task.strip():
             agent.add_todo(new_task.strip())
+            st.success("To-do added!", icon="✅")
             st.rerun()
 
     # Display pending to-dos
@@ -166,8 +168,7 @@ with left_col:
         for todo in pending_todos:
             col_a, col_b = st.columns([5, 1])
             col_a.markdown(f"- {todo['text']}")
-            if col_a.caption(f"  *{todo.get('topic', 'General')}*") or True:
-                pass
+            col_a.caption(f"  *{todo.get('topic', 'General')}*")
             if col_b.button("✓", key=f"td_{todo['id']}", help="Mark done"):
                 agent.complete_todo(todo["id"])
                 st.rerun()
@@ -231,10 +232,15 @@ with right_col:
             st.markdown(user_input)
         st.session_state.lm_messages.append(("user", user_input))
 
-        # Get response from agent
+        # Get response from agent (wrapped in error handling)
         with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                response, handoff = agent.chat(user_input)
+            result = safe_agent_chat(
+                agent, user_input, contextual_spinner("coach")
+            )
+            if result is None:
+                st.stop()
+
+            response, handoff = result
 
             # Filter out action token lines before displaying to the user.
             # We don't want "ACTION: COMPLETE_TOPIC | ..." to appear in the chat.

@@ -10,7 +10,7 @@ without touching the agent logic.
 """
 
 # ── Curriculum ────────────────────────────────────────────────────────────────
-# These are the topics the AI Coding Agent knows about and teaches.
+# The AI² learning curriculum — topics tracked across the platform.
 CURRICULUM = """
 - Python fundamentals: functions, OOP, async/await
 - Working with APIs using requests and httpx
@@ -34,79 +34,9 @@ SKILL_DESCRIPTIONS = {
 }
 
 
-def build_system_prompt(skill_level: str) -> str:
-    """
-    Build a system prompt tailored to the learner's skill level.
-
-    Args:
-        skill_level: One of "beginner", "intermediate", or "advanced"
-
-    Returns:
-        A string that gets sent to OpenAI as the system message.
-    """
-
-    base = f"""You are an expert AI coding tutor inside the AI² learning platform.
-Your job is to teach learners how to build AI applications.
-
-Curriculum you teach:
-{CURRICULUM}
-"""
-
-    if skill_level == "beginner":
-        return base + """
-Learner level: BEGINNER — they are just starting out.
-
-Rules you MUST follow:
-1. Use plain, everyday language. Avoid jargon. If you must use a technical
-   term, define it immediately in parentheses. Example: "an API (a way for
-   two programs to talk to each other)".
-2. Always explain WHY before HOW. Tell the learner why something matters
-   before showing the code.
-3. Show every code example in FULL — never use "..." or skip lines.
-4. After every code example, walk through each line in plain English.
-5. Introduce ONE concept per response. Don't overwhelm.
-6. Use real-world analogies to make abstract ideas concrete.
-7. End every response with exactly ONE friendly question to check
-   understanding. Example: "Does that make sense? Can you tell me what
-   a function does in your own words?"
-8. Be encouraging and patient. Mistakes are normal and expected.
-"""
-
-    elif skill_level == "intermediate":
-        return base + """
-Learner level: INTERMEDIATE — they know Python basics and have written some code.
-
-Rules you MUST follow:
-1. Use technical terms, but briefly define any AI-specific ones on first use.
-2. Show idiomatic Python code — use type hints, f-strings, list comprehensions
-   where appropriate.
-3. Explain the reasoning behind design choices, not just the syntax.
-4. You can cover 2-3 related concepts in one response.
-5. Point out common mistakes or gotchas when relevant.
-6. End responses with a suggestion for what to explore next or a small
-   challenge to try.
-"""
-
-    else:  # advanced
-        return base + """
-Learner level: ADVANCED — they are an experienced developer learning AI/ML specifics.
-
-Rules you MUST follow:
-1. Skip all basics. Use precise, technical language throughout.
-2. Lead with trade-offs, edge cases, and production considerations.
-3. Code examples should reflect real-world quality: error handling, typing,
-   async patterns, and docstrings where appropriate.
-4. Compare approaches and explain when to use one over another.
-5. Reference the broader ecosystem: relevant libraries, papers, or tools
-   when applicable.
-6. Push toward architectural thinking — how does this component fit into
-   a larger AI system?
-7. Be concise. The learner doesn't need hand-holding, just clear signal.
-"""
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# STEP 2 — Learning Management Agent
+# Learning Management Agent
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Canonical list of curriculum topics.
@@ -132,8 +62,7 @@ def build_learning_system_prompt(profile: dict) -> str:
     """
     Build a context-rich system prompt for the Learning Management Agent.
 
-    Unlike the Coding Agent's prompt (which only knows skill level), this
-    prompt injects the learner's FULL current state so every LLM response
+    Injects the learner's FULL current state so every LLM response
     is grounded in their actual progress.
 
     WHY we do this: The AI has no memory between calls. By putting the
@@ -155,7 +84,6 @@ def build_learning_system_prompt(profile: dict) -> str:
     # ── Section 1: Role definition ────────────────────────────────────────────
     role = """You are the Learning Manager inside the AI² learning platform.
 Your job is to help the learner stay organized, track their progress, and decide what to study next.
-You are NOT a coding tutor — the AI Coding Agent handles code explanations.
 You are a learning coach who helps the learner plan, track, and reflect on their journey.
 """
 
@@ -424,19 +352,24 @@ def build_practice_system_prompt(
 
     Args:
         mode:          "quiz" | "challenge" | "interview"
-        topic:         Curriculum topic string (used in quiz + challenge)
+        topic:         Optional AI topic string for focused practice
         role:          "AI Builder" | "AI PM" (used in interview)
-        num_questions: How many questions/rounds in this session (default 5)
+        num_questions: How many questions/rounds in this session (default 10)
 
     Returns:
         A system message string ready to use as conversation_history[0].
     """
 
+    normalized_topic = (topic or "").strip()
+    broad_practice = normalized_topic in ("", "All AI topics", "General / No specific topic")
+
     # ── Common curriculum context (injected into every mode) ─────────────────
     curriculum_context = f"""
 You are part of the AI² learning platform. The curriculum covers:
 {CURRICULUM}
-Stay on topic. Only ask about skills directly relevant to the curriculum above.
+You may assess the learner on any AI, ML, LLM, data, agent, evaluation, deployment,
+or AI product topic they request, including topics beyond the core curriculum.
+Stay within AI-related topics and avoid drifting into unrelated domains.
 """
 
     # ── Difficulty instructions (injected into quiz + interview) ─────────────
@@ -461,8 +394,15 @@ Stay on topic. Only ask about skills directly relevant to the curriculum above.
     # QUIZ MODE
     # ═════════════════════════════════════════════════════════════════════════
     if mode == "quiz":
+        quiz_scope = (
+            "Your job is to test the learner across a broad mix of AI topics. "
+            "Vary questions across foundations, models, prompting, retrieval, evaluation, "
+            "deployment, agents, and AI product/system trade-offs."
+            if broad_practice else
+            f"Your job is to test the learner's knowledge of this AI topic: {normalized_topic}"
+        )
         role_section = f"""You are a quiz examiner for the AI² learning platform.
-Your job is to test the learner's knowledge of: {topic}
+{quiz_scope}
 You will ask exactly {num_questions} multiple-choice questions, one at a time.
 After the learner answers each question, grade it and move to the next one.
 After question {num_questions}, give a session summary.
@@ -512,8 +452,20 @@ Rules:
     # CODING CHALLENGE MODE
     # ═════════════════════════════════════════════════════════════════════════
     elif mode == "challenge":
+        challenge_scope = (
+            "Your job is to give the learner ONE coding task drawn from a realistic AI/ML workflow. "
+            "Pick a useful area such as prompting, LLM APIs, evaluation, retrieval, data pipelines, "
+            "agents, model serving, or AI product instrumentation."
+            if broad_practice else
+            f"Your job is to give the learner ONE coding task on this AI topic: {normalized_topic}"
+        )
+        challenge_difficulty = {
+            "Beginner": "Make the task short, focused, and implementable as a small function or script.",
+            "Intermediate": "Make the task practical and moderately open-ended, with at least one real-world trade-off.",
+            "Advanced": "Make the task production-minded, with edge cases, evaluation concerns, or system design constraints.",
+        }.get(difficulty, "Make the task practical and moderately open-ended.")
         role_section = f"""You are a coding challenge presenter and reviewer for the AI² platform.
-Your job is to give the learner ONE coding task on: {topic}
+{challenge_scope}
 Then evaluate their submitted solution honestly.
 """
 
@@ -545,10 +497,11 @@ FORMAT for grading a submission:
         rules_section = """
 Rules:
 1. Present exactly ONE task. Keep it focused and achievable in 15-20 minutes.
-2. Choose a task relevant to the curriculum topic — something a real AI builder would write.
+2. Choose a task relevant to the chosen AI scope — something a real AI builder would write.
 3. Do NOT write the solution for the learner. Guide without giving away the answer.
 4. If the learner asks for a hint, give one small nudge — not the full answer.
 5. After grading, ask if they want a new challenge on the same or different topic.
+6. Match the task to the requested difficulty. {challenge_difficulty}
 """
         return role_section + format_section + curriculum_context + rules_section
 
@@ -557,9 +510,9 @@ Rules:
     # ═════════════════════════════════════════════════════════════════════════
     else:  # interview
         _topic_line = (
-            f"Focus all questions on this specific area:\n  \"{topic}\"\n"
-            if topic and topic != "General / No specific topic"
-            else ""
+            "Cover a broad mix of realistic AI scenarios rather than staying on one narrow topic.\n"
+            if broad_practice else
+            f"Focus all questions on this specific area:\n  \"{normalized_topic}\"\n"
         )
         role_section = f"""You are a professional interviewer at a top AI company, hiring for the role of {role}.
 Your job is to conduct a realistic mock interview with {num_questions} questions.

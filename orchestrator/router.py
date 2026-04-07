@@ -1,11 +1,17 @@
 """
-router.py — Central Orchestrator (Step 6, not yet built).
+router.py — Legacy stub (NOT the real router).
+
+⚠️  The real orchestrator is in agents/orchestrator.py (Orchestrator class).
+    That file contains the full routing logic: classification via Haiku,
+    handoff detection, agent caching, and a chat() method used by workspace.py.
+
+This file is kept only so that old import paths don't break.
+Do NOT add routing logic here — edit agents/orchestrator.py instead.
 
 WHY THIS EXISTS NOW:
 --------------------
-We create this stub so the import structure is ready. When we build the
-orchestrator in Step 6, we won't need to change any of the agent files —
-we just fill in this file.
+We created this stub so the import structure was ready before the orchestrator
+was built. The real implementation landed in agents/orchestrator.py.
 
 WHAT IT WILL DO:
 ----------------
@@ -36,7 +42,7 @@ Each agent exposes:
 class Router:
     """Placeholder for the central orchestrator. Coming in Step 6."""
 
-    def route(self, user_message: str, agent_name: str = "coding") -> str:
+    def route(self, user_message: str, agent_name: str = "atlas") -> str:
         return (
             "The orchestrator is coming in Step 6. "
             "For now, use each agent directly."

@@ -60,6 +60,7 @@ from config.settings import MAX_HISTORY_TURNS, DEFAULT_SKILL_LEVEL
 from config.prompts import build_idea_system_prompt
 from utils.claude_client import ClaudeClient
 from utils.skills_loader import load_combined_skill
+from utils.browser_tools import browse_url, scrape_github_repo
 
 
 class IdeaAgent:
@@ -142,6 +143,21 @@ class IdeaAgent:
             "content": system_text,
         }
 
+    # ── Tool execution ────────────────────────────────────────────────────────
+
+    def _execute_tool(self, tool_name: str, tool_args: dict) -> str:
+        """
+        Route browser tool calls from the ReAct loop.
+
+        Spark has browse_url (research existing projects, docs, market context)
+        and scrape_github_repo (examine trending or competing repos).
+        """
+        if tool_name == "browse_url":
+            return browse_url(tool_args.get("url", ""), tool_args.get("question", ""))
+        if tool_name == "scrape_github_repo":
+            return scrape_github_repo(tool_args.get("repo_url", ""))
+        return json.dumps({"error": f"Unknown tool: {tool_name}"})
+
     # ── Core chat ─────────────────────────────────────────────────────────────
 
     def chat(self, user_message: str) -> tuple[str, dict | None]:
@@ -179,12 +195,15 @@ class IdeaAgent:
         # Step 1: Add user message to history
         self.conversation_history.append({"role": "user", "content": user_message})
 
-        # Step 2: Call Claude — temperature changes per mode (key concept)
+        # Step 2: Call Claude — temperature changes per mode (key concept).
+        # chat_with_tools() is used so Spark can browse_url and scrape_github_repo.
         system = self.conversation_history[0]["content"]
         messages = [m for m in self.conversation_history if m["role"] != "system"]
-        reply = self.client.chat(
+        reply = self.client.chat_with_tools(
             messages=messages,
             system=system,
+            agent_name="ideas",
+            tool_executor=self._execute_tool,
             temperature=self._TEMPERATURE[self.mode],   # ← brainstorm=1.0, brief=0.3, feedback=0.5
         )
 

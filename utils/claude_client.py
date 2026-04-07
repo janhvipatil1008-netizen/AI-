@@ -161,47 +161,6 @@ _SEARCH_TOOLS = [
     },
 ]
 
-_CODE_TOOLS = [
-    {
-        "name": "execute_python",
-        "description": "Execute Python code and return stdout + stderr. 10s timeout.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "code": {"type": "string"},
-            },
-            "required": ["code"],
-        },
-    },
-    {
-        "name": "check_syntax",
-        "description": "Check Python code for syntax errors without running it.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "code": {"type": "string"},
-            },
-            "required": ["code"],
-        },
-    },
-    {
-        "name": "get_code_template",
-        "description": "Get a starter code template. Options: claude_chat, rag_pipeline, streamlit_app, tool_use, embeddings.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "template_name": {"type": "string"},
-            },
-            "required": ["template_name"],
-        },
-    },
-    {
-        "name": "list_templates",
-        "description": "List all available code templates with descriptions.",
-        "input_schema": {"type": "object", "properties": {}, "required": []},
-    },
-]
-
 _ASSESSMENT_TOOLS = [
     {
         "name": "save_score",
@@ -276,24 +235,101 @@ _IDEAS_TOOLS = [
 ]
 
 
+_BROWSER_TOOLS = [
+    {
+        "name": "browse_url",
+        "description": (
+            "Navigate to a URL with a real browser and return the full readable text of the page. "
+            "Use this to read complete documentation pages, follow links from search results, "
+            "read arXiv paper abstracts or full text, or access any specific URL. "
+            "Much more complete than web_search which only returns short snippets."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The full URL to visit (must start with https:// or http://).",
+                },
+                "question": {
+                    "type": "string",
+                    "description": (
+                        "Optional. A specific question to focus on when reading the page. "
+                        "E.g. 'What are the rate limits?' or 'Show me a code example.'"
+                    ),
+                },
+            },
+            "required": ["url"],
+        },
+    },
+    {
+        "name": "search_and_browse",
+        "description": (
+            "Search the web and open the top result pages to read their full content. "
+            "More thorough than web_search — returns complete page text rather than snippets. "
+            "Use for finding current documentation, tutorials, news articles, interview questions, "
+            "or any topic where you need the full page rather than a summary."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "The search query.",
+                },
+                "max_pages": {
+                    "type": "integer",
+                    "description": "Number of top result pages to open and read (default 2, max 5).",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "scrape_github_repo",
+        "description": (
+            "Visit a GitHub repository and extract its README, description, star count, and topics. "
+            "Use to research existing open-source projects, understand what a library does, "
+            "check if a project is actively maintained, or find code examples in the README."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "repo_url": {
+                    "type": "string",
+                    "description": (
+                        "GitHub repo URL or short form. Examples: "
+                        "'https://github.com/anthropics/anthropic-sdk-python' "
+                        "or 'anthropics/anthropic-sdk-python'."
+                    ),
+                },
+            },
+            "required": ["repo_url"],
+        },
+    },
+]
+
+_BROWSE_URL_TOOL         = _BROWSER_TOOLS[0]
+_SEARCH_AND_BROWSE_TOOL  = _BROWSER_TOOLS[1]
+_SCRAPE_GITHUB_TOOL      = _BROWSER_TOOLS[2]
+
+
 # ── Tool Registry ─────────────────────────────────────────────────────────────
 # Maps each agent name → the tools it is allowed to use.
 # This is the "least privilege" access control list.
 #
 # Key design decisions:
 #   - ALL agents get learner_state — it's the shared backbone
-#   - Research gets search tools — that's its whole job
-#   - Coding gets code execution — so it can verify its own answers
-#   - Practice gets assessment — to save/read scores
+#   - Research gets search tools + browser — full research suite
+#   - Practice gets assessment + search_and_browse — can source real questions
 #   - Learning Manager gets assessment + learner_state — to plan next steps
-#   - Ideas gets ideas tools — to save/retrieve project ideas
+#   - Ideas gets ideas tools + browse_url + scrape_github — for market research
 
 TOOL_REGISTRY: dict[str, list[dict]] = {
-    "coding":   _CODE_TOOLS + _LEARNER_STATE_TOOLS,
-    "research": _SEARCH_TOOLS + _LEARNER_STATE_TOOLS,
-    "practice": _ASSESSMENT_TOOLS + _LEARNER_STATE_TOOLS,
+    "research": _SEARCH_TOOLS + _LEARNER_STATE_TOOLS + [_BROWSE_URL_TOOL, _SEARCH_AND_BROWSE_TOOL],
+    "practice": _ASSESSMENT_TOOLS + _LEARNER_STATE_TOOLS + [_SEARCH_AND_BROWSE_TOOL],
     "learning": _ASSESSMENT_TOOLS + _LEARNER_STATE_TOOLS,
-    "ideas":    _IDEAS_TOOLS + _LEARNER_STATE_TOOLS,
+    "ideas":    _IDEAS_TOOLS + _LEARNER_STATE_TOOLS + [_BROWSE_URL_TOOL, _SCRAPE_GITHUB_TOOL],
 }
 
 

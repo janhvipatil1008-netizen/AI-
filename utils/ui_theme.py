@@ -11,6 +11,15 @@ _CSS = """
 /* ── FONTS ── */
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap');
 
+/* ── AGENT ACCENT COLORS ── */
+:root {
+    --color-atlas:    #89B4FA;  /* blue   — Learning Coach  */
+    --color-dojo:     #FAB387;  /* orange — Practice Arena  */
+    --color-spark:    #F9E2AF;  /* yellow — Idea Generator  */
+    --color-syllabus: #A6E3A1;  /* green  — Career Roadmap  */
+    --color-default:  #89DCEB;  /* cyan   — fallback / Mission Control */
+}
+
 /* ── BASE — deep gradient background ── */
 html, body,
 [data-testid="stApp"],
@@ -340,8 +349,13 @@ code {
 
 /* ── SPINNER ── */
 [data-testid="stSpinner"] svg circle {
-    stroke: #89DCEB !important;
+    stroke: var(--color-default) !important;
 }
+/* Per-agent spinner color — set data-agent attribute on a parent div via st.markdown */
+[data-agent="atlas"] [data-testid="stSpinner"] svg circle    { stroke: var(--color-atlas)    !important; }
+[data-agent="dojo"] [data-testid="stSpinner"] svg circle     { stroke: var(--color-dojo)     !important; }
+[data-agent="spark"] [data-testid="stSpinner"] svg circle    { stroke: var(--color-spark)    !important; }
+[data-agent="syllabus"] [data-testid="stSpinner"] svg circle { stroke: var(--color-syllabus) !important; }
 
 /* ── PROGRESS BAR ── */
 .stProgress > div > div > div > div {
@@ -522,19 +536,22 @@ _WELCOME_CSS = """
 }
 
 /* ── AGENT VIEW LAYOUT ── */
-.agent-ctrl {
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 14px;
-    backdrop-filter: blur(16px);
-    padding: 20px 16px;
-    min-height: 80vh;
+/* Coloured accent bar at the top of each agent's control column */
+.ctrl-accent {
+    height: 3px;
+    border-radius: 2px;
+    margin-bottom: 14px;
+    opacity: 0.75;
 }
+.ctrl-accent-atlas { background: #89B4FA; }
+.ctrl-accent-dojo  { background: #FAB387; }
+.ctrl-accent-spark { background: #F9E2AF; }
+
 .ctrl-label {
     font-family: 'JetBrains Mono', monospace;
     font-size: 10px; text-transform: uppercase;
-    letter-spacing: 0.1em; color: #45475A;
-    margin-bottom: 8px; margin-top: 20px;
+    letter-spacing: 0.12em; color: #6C7086;
+    margin-bottom: 6px; margin-top: 20px;
 }
 .ctrl-label:first-child { margin-top: 0; }
 

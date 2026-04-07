@@ -8,11 +8,11 @@ their contents as a string to be appended to an agent's system prompt.
 
 WHY DOES THIS EXIST?
 ---------------------
-Without this: agent behavior = Python code. To change how an agent teaches,
-you edit `agents/coding_agent.py`, re-test, redeploy.
+Without this: agent behavior = Python code. To change how an agent behaves,
+you edit the agent file, re-test, redeploy.
 
-With this: agent behavior = markdown file. To change how an agent teaches,
-you edit `skills/coding_agent_skill.md` in any text editor. No code change.
+With this: agent behavior = markdown file. To change how an agent behaves,
+you edit the relevant skill file in any text editor. No code change.
 
 This separation — "code does the work, markdown defines the behavior" — is how
 real AI product teams iterate fast on agent quality without engineering cycles.
@@ -27,9 +27,9 @@ USAGE:
   from utils.skills_loader import load_skill, load_global_skill
 
   # In an agent's __init__, append to the system prompt:
-  system_prompt = build_coding_system_prompt(skill_level)
+  system_prompt = build_learning_system_prompt(profile)
   system_prompt += "\\n\\n" + load_global_skill()
-  system_prompt += "\\n\\n" + load_skill("coding")
+  system_prompt += "\\n\\n" + load_skill("learning")
 """
 
 import os
@@ -42,7 +42,6 @@ SKILLS_DIR = os.path.join(
 
 # Map agent identifiers → skill filenames
 _SKILL_FILES = {
-    "coding":   "coding_agent_skill.md",
     "learning": "learning_manager_skill.md",
     "research": "research_agent_skill.md",
     "practice": "practice_agent_skill.md",

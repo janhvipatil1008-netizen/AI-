@@ -13,6 +13,7 @@ from pathlib import Path
 
 import streamlit as st
 from utils.ui_theme import inject_css, inject_welcome_css
+from utils.ui_helpers import safe_agent_chat, contextual_spinner, show_xp_toast
 from config.syllabus import (
     PHASES, ROLE_TRACKS, ROLE_SKILLS,
     get_progress, get_task_key, get_next_tasks, get_current_phase_id,
@@ -37,16 +38,6 @@ st.markdown("""
 <style>
 [data-testid="stSidebar"]        { display: none !important; }
 [data-testid="collapsedControl"] { display: none !important; }
-.stButton > button[kind="primary"] {
-    background: rgba(137,220,235,0.10) !important;
-    border: 1px solid rgba(137,220,235,0.45) !important;
-    color: #89DCEB !important;
-    box-shadow: 0 0 12px rgba(137,220,235,0.12) !important;
-}
-.stButton > button[kind="primary"]:hover {
-    background: rgba(137,220,235,0.18) !important;
-    box-shadow: 0 0 18px rgba(137,220,235,0.2) !important;
-}
 .ws-header-cols [data-testid="column"] + [data-testid="column"] {
     border-left: none !important;
     padding-left: 0 !important;
@@ -81,20 +72,6 @@ def _save_profile(p: dict) -> None:
     PROFILE_PATH.write_text(json.dumps(p, indent=2, default=str))
 
 
-def _get_done_ids() -> set:
-    """Return the set of practice problem IDs the learner has already solved."""
-    return set(_load_profile().get("forge_problems_done", []))
-
-
-def _mark_problem_done(problem_id: str) -> None:
-    """Persist a solved problem ID to the learner profile."""
-    p = _load_profile()
-    done = set(p.get("forge_problems_done", []))
-    done.add(problem_id)
-    p["forge_problems_done"] = list(done)
-    _save_profile(p)
-
-
 def _award_xp(amount: int) -> None:
     p = _load_profile()
     p["xp"] = p.get("xp", 0) + amount
@@ -111,14 +88,13 @@ initial   = user_name[0].upper() if user_name else "?"
 
 # ── Slim header ───────────────────────────────────────────────────────────────
 AGENT_LABELS = {
-    "forge":    "💻 Forge — AI Coding Tutor",
     "atlas":    "🧭 Atlas — Learning Coach",
     "dojo":     "🎯 Dojo — Practice Arena",
     "spark":    "💡 Spark — Idea Generator",
     "syllabus": "📋 Career Roadmap",
 }
 
-active = st.session_state.get("active_agent", "forge")
+active = st.session_state.get("active_agent", "atlas")
 
 st.markdown('<div class="ws-header-cols">', unsafe_allow_html=True)
 h_back, h_title, h_user = st.columns([1.2, 5, 2])
@@ -156,532 +132,6 @@ st.markdown(
 )
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# FORGE — Coding Agent
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# ── Ace editor import with graceful fallback ──────────────────────────────
-try:
-    from code_editor import code_editor as _ace_editor
-    _HAS_ACE = True
-except ImportError:
-    _HAS_ACE = False
-
-
-def _forge_code_editor(current_code: str) -> str:
-    """Render Ace editor (or text_area fallback). Returns current editor content."""
-    if _HAS_ACE:
-        result = _ace_editor(
-            code=current_code,
-            lang="python",
-            theme="tomorrow_night",
-            height=[20, 38],
-            shortcuts="vscode",
-            focus=False,
-            allow_reset=True,
-            response_mode="blur",
-            key="forge_ace_editor",
-            options={"wrap": True, "tabSize": 4},
-            props={"style": {"borderRadius": "10px",
-                             "border": "1px solid rgba(255,255,255,0.1)"}},
-        )
-        return result.get("text", current_code) if result else current_code
-    else:
-        return st.text_area(
-            "code_fallback",
-            value=current_code,
-            height=400,
-            label_visibility="collapsed",
-            key="forge_textarea_fallback",
-            placeholder="# Write your Python code here...",
-        ) or current_code
-
-
-def _send_to_tutor_and_append(agent, message: str, context_code: str = "") -> None:
-    """Send message to Forge AI (with optional code context), append to chat, rerun."""
-    full_msg = (
-        f"```python\n{context_code}\n```\n\n{message}" if context_code else message
-    )
-    st.session_state.fa_messages.append(("user", message))
-    with st.spinner("Forge is thinking..."):
-        reply = agent.chat_and_run(full_msg)
-    st.session_state.fa_messages.append(("assistant", reply))
-    st.rerun()
-
-
-def _render_forge_toolbar(agent) -> None:
-    """Top toolbar: language label, template picker, skill selector, new chat."""
-    from utils.code_runner import _TEMPLATES, get_code_template
-
-    tb1, tb2, tb3, _space, tb4 = st.columns([1.2, 2, 2, 3, 1.5], gap="small")
-
-    with tb1:
-        st.markdown(
-            '<div style="font-family:\'JetBrains Mono\',monospace;font-size:12px;'
-            'color:#89DCEB;padding-top:6px;font-weight:600;">🐍 Python</div>',
-            unsafe_allow_html=True,
-        )
-
-    with tb2:
-        template_names = ["— template —"] + list(_TEMPLATES.keys())
-        chosen = st.selectbox(
-            "tpl", template_names,
-            label_visibility="collapsed",
-            key="forge_tpl_select",
-        )
-        if chosen != "— template —" and chosen != st.session_state.forge_template_loaded:
-            st.session_state.forge_editor_code      = get_code_template(chosen)
-            st.session_state.forge_template_loaded  = chosen
-            st.session_state.forge_output           = ""
-            st.session_state.forge_stderr           = ""
-            st.session_state.forge_challenge_active = False
-            st.rerun()
-
-    with tb3:
-        skill_opts = ["beginner", "intermediate", "advanced"]
-        idx = skill_opts.index(agent.skill_level) if agent.skill_level in skill_opts else 0
-        sel = st.selectbox(
-            "skill", skill_opts,
-            index=idx,
-            label_visibility="collapsed",
-            key="forge_skill_select",
-        )
-        if sel != agent.skill_level:
-            agent.set_skill_level(sel)
-            st.session_state.forge_challenge_active = False
-
-    with tb4:
-        if st.button("🗑 New Chat", key="forge_reset", use_container_width=True):
-            agent.reset()
-            st.session_state.fa_messages          = []
-            st.session_state.forge_editor_code    = "# Start coding here...\n"
-            st.session_state.forge_output         = ""
-            st.session_state.forge_stderr         = ""
-            st.session_state.forge_last_run_had_error = False
-            st.session_state.forge_challenge_active  = False
-            st.session_state.forge_template_loaded   = ""
-            st.session_state.forge_practice_problem  = None
-            st.rerun()
-
-
-def _render_problem_card(problem: dict, agent) -> None:
-    """Render the active practice problem card inside the tutor panel."""
-    from config.python_curriculum import get_level_progress
-
-    level = problem["level"]
-    done_count, total_count = get_level_progress(level, _get_done_ids())
-
-    level_colors = {
-        "beginner":     ("#A6E3A1", "rgba(166,227,161,0.12)"),
-        "intermediate": ("#89DCEB", "rgba(137,220,235,0.12)"),
-        "advanced":     ("#CBA6F7", "rgba(203,166,247,0.12)"),
-    }
-    badge_color, bg_color = level_colors.get(level, ("#CDD6F4", "rgba(205,214,244,0.08)"))
-
-    st.markdown(
-        f"""<div style="
-            background:{bg_color};
-            border:1px solid {badge_color}44;
-            border-left:3px solid {badge_color};
-            border-radius:12px;
-            padding:14px 16px;
-            margin-bottom:14px;
-        ">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-            <span style="font-size:11px;font-weight:700;color:{badge_color};
-                         text-transform:uppercase;letter-spacing:0.1em;">
-                {level}
-            </span>
-            <span style="font-size:11px;color:#6C7086;">
-                {problem['concept']} · {done_count}/{total_count} done
-            </span>
-        </div>
-        <div style="font-size:15px;font-weight:700;color:#CDD6F4;margin-bottom:6px;">
-            {problem['title']}
-        </div>
-        <div style="font-size:13px;color:#BAC2DE;line-height:1.6;margin-bottom:10px;">
-            {problem['description']}
-        </div>
-        <div style="background:rgba(14,16,28,0.6);border-radius:8px;padding:10px 12px;
-                    font-family:'JetBrains Mono',monospace;font-size:11px;margin-bottom:4px;">
-            <span style="color:#6C7086;">Input: </span>
-            <span style="color:#89DCEB;">{problem['example_in']}</span><br>
-            <span style="color:#6C7086;">Output: </span>
-            <span style="color:#A6E3A1;">{problem['example_out'].replace(chr(10),' · ')}</span>
-        </div>
-        </div>""",
-        unsafe_allow_html=True,
-    )
-
-    # Hints
-    with st.expander("💡 Hint 1", expanded=False):
-        st.markdown(f"_{problem['hint1']}_")
-    with st.expander("💡 Hint 2", expanded=False):
-        st.markdown(f"_{problem['hint2']}_")
-
-    # Action buttons
-    col_check, col_skip = st.columns(2, gap="small")
-    with col_check:
-        if st.button("✅ Check My Solution", key="forge_check_solution",
-                     type="primary", use_container_width=True):
-            from utils.code_runner import execute_python
-            code = st.session_state.forge_editor_code.strip()
-            if not code:
-                st.toast("Write your solution in the editor first.", icon="⚠️")
-            else:
-                # Run the code first so the learner sees output, then evaluate
-                with st.spinner("Running your code..."):
-                    run_output = execute_python(code, stdin=st.session_state.get("forge_stdin", ""))
-                # Update output console
-                if run_output.startswith("[stderr]:\n") or run_output.startswith("[Error]:"):
-                    st.session_state.forge_stderr = run_output.lstrip("[stderr]:\n")
-                    st.session_state.forge_output = ""
-                else:
-                    st.session_state.forge_output = run_output
-                    st.session_state.forge_stderr = ""
-
-                with st.spinner("Evaluating..."):
-                    feedback = agent.evaluate_solution(problem, code)
-
-                # Parse score from "SCORE: X/5"
-                score = 0
-                for line in feedback.splitlines():
-                    if line.startswith("SCORE:"):
-                        try:
-                            score = int(line.split(":")[1].strip().split("/")[0])
-                        except (IndexError, ValueError):
-                            pass
-                        break
-
-                st.session_state.fa_messages.append(("assistant", feedback))
-
-                if score >= 3:
-                    _mark_problem_done(problem["id"])
-                    _award_xp(15)
-                    st.session_state.forge_practice_problem = None
-                    st.toast(f"✅ Score {score}/5 — Nice work! +15 XP", icon="🎉")
-
-                    # Check for level completion
-                    from config.python_curriculum import get_level_progress
-                    done_now, total = get_level_progress(problem["level"], _get_done_ids())
-                    if done_now == total:
-                        st.balloons()
-                        st.session_state.fa_messages.append((
-                            "assistant",
-                            f"🏆 **Level complete!** You've finished all {total} "
-                            f"{problem['level']} problems. Try switching to the next level "
-                            "using the skill selector above.",
-                        ))
-                else:
-                    st.toast(f"Score {score}/5 — Keep trying! Check the feedback.", icon="💪")
-
-                st.rerun()
-
-    with col_skip:
-        if st.button("⏭ Skip", key="forge_skip_problem", use_container_width=True):
-            st.session_state.forge_practice_problem = None
-            st.rerun()
-
-    st.markdown(
-        "<div style='border-bottom:1px solid rgba(255,255,255,0.06);margin:10px 0 14px;'></div>",
-        unsafe_allow_html=True,
-    )
-
-
-def _render_tutor_panel(agent) -> None:
-    """Left panel: quick-action buttons + chat history + chat input."""
-    _MONO = "font-family:'JetBrains Mono',monospace;"
-
-    st.markdown(
-        f'<div style="{_MONO}font-size:10px;text-transform:uppercase;'
-        'letter-spacing:0.12em;color:#45475A;margin-bottom:12px;">🤖 AI Tutor</div>',
-        unsafe_allow_html=True,
-    )
-
-    # ── Practice problem card (shown when active) ─────────────────────────────
-    if st.session_state.get("forge_practice_problem"):
-        _render_problem_card(st.session_state.forge_practice_problem, agent)
-
-    # ── Quick action buttons (2×2 grid) ──────────────────────────────────────
-    qa1, qa2 = st.columns(2, gap="small")
-    with qa1:
-        if st.button("📖 Explain", key="forge_qa_explain", use_container_width=True):
-            code = st.session_state.forge_editor_code.strip()
-            if code and code != "# Start coding here...":
-                _send_to_tutor_and_append(agent, "Explain this code, line by line:", code)
-            else:
-                st.toast("Write some code in the editor first.", icon="⚠️")
-
-        if st.button("✨ Improve", key="forge_qa_improve", use_container_width=True):
-            code = st.session_state.forge_editor_code.strip()
-            if code and code != "# Start coding here...":
-                _send_to_tutor_and_append(
-                    agent, "Suggest 2–3 concrete improvements for this code:", code
-                )
-            else:
-                st.toast("Write some code in the editor first.", icon="⚠️")
-
-    with qa2:
-        if st.button("🐛 Fix Error", key="forge_qa_fix", use_container_width=True):
-            stderr = st.session_state.forge_stderr
-            code   = st.session_state.forge_editor_code.strip()
-            if stderr:
-                _send_to_tutor_and_append(
-                    agent,
-                    f"I got this error:\n```\n{stderr}\n```\nExplain what's wrong and show the corrected code:",
-                    code,
-                )
-            else:
-                st.toast("Run your code first to see an error.", icon="ℹ️")
-
-        if st.button("🎯 Challenge", key="forge_qa_challenge", use_container_width=True):
-            st.session_state.forge_challenge_active = True
-            _send_to_tutor_and_append(
-                agent,
-                "Give me ONE focused coding challenge I can complete in 5–15 minutes "
-                "using Python and an AI API. Format: task description, expected "
-                "input/output, and one bonus extension. No solution.",
-            )
-
-    # Practice button — full width below the 2×2 grid
-    if st.button("📚 Practice", key="forge_qa_practice", use_container_width=True):
-        from config.python_curriculum import get_next_problem
-        problem = get_next_problem(agent.skill_level, _get_done_ids())
-        if problem is None:
-            st.toast("🎉 All problems done for this level! Try a higher skill level.", icon="🏆")
-        else:
-            st.session_state.forge_practice_problem = problem
-            if problem.get("starter"):
-                st.session_state.forge_editor_code = problem["starter"]
-            st.rerun()
-
-    st.markdown(
-        "<div style='border-bottom:1px solid rgba(255,255,255,0.06);margin:10px 0 14px;'></div>",
-        unsafe_allow_html=True,
-    )
-
-    # ── Chat history ──────────────────────────────────────────────────────────
-    if not st.session_state.fa_messages:
-        with st.chat_message("assistant"):
-            st.markdown(
-                "👋 Hi! I'm **Forge**, your AI coding tutor.\n\n"
-                "Write code in the editor on the right, hit **▶ Run**, "
-                "and I'll help you understand errors and improve your work.\n\n"
-                "Or use the quick actions above — explain your code, get a challenge, "
-                "fix an error, or ask me anything."
-            )
-
-    for role, content in st.session_state.fa_messages:
-        with st.chat_message(role):
-            st.markdown(content)
-
-    # ── Chat input ────────────────────────────────────────────────────────────
-    user_input = st.chat_input("Ask Forge anything...", key="forge_chat_input")
-    if user_input:
-        code_ctx = st.session_state.forge_editor_code.strip()
-        has_real_code = code_ctx and code_ctx != "# Start coding here..."
-        _send_to_tutor_and_append(agent, user_input, code_ctx if has_real_code else "")
-        _award_xp(5)
-
-
-def _render_ide_panel(agent) -> None:
-    """Right panel: code editor on top, run controls, output console below."""
-    from utils.code_runner import execute_python, check_syntax
-
-    # ── Editor label ─────────────────────────────────────────────────────────
-    st.markdown(
-        '<div style="font-family:\'JetBrains Mono\',monospace;font-size:10px;'
-        'text-transform:uppercase;letter-spacing:0.12em;color:#45475A;'
-        'margin-bottom:6px;">📝 Editor</div>',
-        unsafe_allow_html=True,
-    )
-
-    # ── Code editor ───────────────────────────────────────────────────────────
-    new_code = _forge_code_editor(st.session_state.forge_editor_code)
-    # Only update if the editor returned something non-empty (it returns "" on
-    # first render after a starter-code change, which would wipe the code).
-    if new_code:
-        st.session_state.forge_editor_code = new_code
-
-    # ── Program input (stdin) ─────────────────────────────────────────────────
-    with st.expander("⌨️ Program Input (stdin)", expanded=bool(st.session_state.forge_stdin)):
-        st.session_state.forge_stdin = st.text_area(
-            "stdin",
-            value=st.session_state.forge_stdin,
-            height=80,
-            placeholder="Enter input values here, one per line...\ne.g.  25\nhello world",
-            label_visibility="collapsed",
-            key="forge_stdin_area",
-        )
-
-    # ── Action buttons ────────────────────────────────────────────────────────
-    btn_run, btn_syntax, btn_clear, _ = st.columns([1.5, 2, 1.5, 3], gap="small")
-
-    with btn_run:
-        run_clicked = st.button(
-            "▶ Run", key="forge_run_btn",
-            type="primary", use_container_width=True,
-        )
-    with btn_syntax:
-        syntax_clicked = st.button(
-            "🔍 Check Syntax", key="forge_syntax_btn",
-            use_container_width=True,
-        )
-    with btn_clear:
-        if st.button("🗑 Clear", key="forge_clear_btn", use_container_width=True):
-            st.session_state.forge_output = ""
-            st.session_state.forge_stderr = ""
-            st.rerun()
-
-    # ── Syntax check ──────────────────────────────────────────────────────────
-    if syntax_clicked:
-        code = st.session_state.forge_editor_code.strip()
-        msg  = check_syntax(code) if code else "No code to check."
-        st.toast(msg, icon="✅" if "No syntax errors" in msg else "❌")
-
-    # ── Run handler ───────────────────────────────────────────────────────────
-    if run_clicked:
-        code = st.session_state.forge_editor_code.strip()
-        if not code:
-            st.toast("Write some code first.", icon="⚠️")
-        else:
-            with st.spinner("Running..."):
-                raw = execute_python(code, stdin=st.session_state.forge_stdin)
-
-            # Parse stdout vs stderr
-            if "\n\n[stderr]:\n" in raw:
-                parts  = raw.split("\n\n[stderr]:\n", 1)
-                stdout = parts[0].strip()
-                stderr = parts[1].strip()
-            elif raw.startswith("[stderr]:\n"):
-                stdout = ""
-                stderr = raw[len("[stderr]:\n"):].strip()
-            elif raw.startswith("[Error]:"):
-                stdout = ""
-                stderr = raw
-            else:
-                stdout = raw
-                stderr = ""
-
-            prev_had_error = st.session_state.forge_last_run_had_error
-            st.session_state.forge_output         = stdout
-            st.session_state.forge_stderr         = stderr
-            st.session_state.forge_last_run_had_error = bool(stderr)
-
-            # XP awards
-            if not stderr:
-                _award_xp(10 if prev_had_error else 5)
-                if st.session_state.forge_challenge_active:
-                    _award_xp(15)
-                    st.session_state.forge_challenge_active = False
-                    st.toast("🎯 Challenge complete! +15 XP", icon="🎯")
-
-            # Auto-debug: error → send to AI tutor automatically
-            if stderr:
-                _send_to_tutor_and_append(
-                    agent,
-                    f"I ran my code and got this error:\n```\n{stderr}\n```\n"
-                    "Explain what's wrong and show the corrected code.",
-                    code,
-                )
-            else:
-                st.rerun()
-
-    # ── Output console ────────────────────────────────────────────────────────
-    st.markdown(
-        '<div style="font-family:\'JetBrains Mono\',monospace;font-size:10px;'
-        'text-transform:uppercase;letter-spacing:0.12em;color:#45475A;'
-        'margin-top:14px;margin-bottom:6px;">⬛ Output Console</div>',
-        unsafe_allow_html=True,
-    )
-
-    stdout = st.session_state.forge_output
-    stderr = st.session_state.forge_stderr
-
-    def _esc(s: str) -> str:
-        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
-
-    if not stdout and not stderr:
-        body         = f'<span style="color:#45475A;">// output will appear here after running</span>'
-        border_color = "rgba(255,255,255,0.08)"
-        glow         = ""
-    elif stderr:
-        body         = f'<span style="color:#F38BA8;">{_esc(stderr)}</span>'
-        border_color = "rgba(243,139,168,0.4)"
-        glow         = "box-shadow:0 0 14px rgba(243,139,168,0.12);"
-    else:
-        body         = f'<span style="color:#A6E3A1;">{_esc(stdout)}</span>'
-        border_color = "rgba(166,227,161,0.3)"
-        glow         = "box-shadow:0 0 12px rgba(166,227,161,0.08);"
-
-    st.markdown(
-        f"""<div style="
-            background:rgba(14,16,28,0.85);
-            border:1px solid {border_color};
-            border-left:3px solid {border_color};
-            border-radius:10px;
-            padding:14px 18px;
-            font-family:'JetBrains Mono',monospace;
-            font-size:12px;
-            line-height:1.7;
-            color:#CDD6F4;
-            min-height:80px;
-            max-height:260px;
-            overflow-y:auto;
-            {glow}
-        ">{body}</div>""",
-        unsafe_allow_html=True,
-    )
-
-
-def render_forge() -> None:
-    from agents.coding_agent import CodingAgent
-
-    # ── Session state init ────────────────────────────────────────────────────
-    if "forge_agent" not in st.session_state:
-        st.session_state.forge_agent = CodingAgent(
-            skill_level=profile.get("skill_level", "beginner")
-        )
-    if "fa_messages" not in st.session_state:
-        st.session_state.fa_messages = []
-    if "forge_editor_code" not in st.session_state:
-        st.session_state.forge_editor_code = "# Start coding here...\n"
-    if "forge_output" not in st.session_state:
-        st.session_state.forge_output = ""
-    if "forge_stderr" not in st.session_state:
-        st.session_state.forge_stderr = ""
-    if "forge_last_run_had_error" not in st.session_state:
-        st.session_state.forge_last_run_had_error = False
-    if "forge_challenge_active" not in st.session_state:
-        st.session_state.forge_challenge_active = False
-    if "forge_template_loaded" not in st.session_state:
-        st.session_state.forge_template_loaded = ""
-    if "forge_stdin" not in st.session_state:
-        st.session_state.forge_stdin = ""
-    if "forge_practice_problem" not in st.session_state:
-        st.session_state.forge_practice_problem = None
-
-    # Graceful migration: remove old mode-based keys if present
-    for _k in ("forge_mode", "forge_challenge", "forge_feedback", "forge_tested"):
-        st.session_state.pop(_k, None)
-
-    agent = st.session_state.forge_agent
-
-    # ── Toolbar ───────────────────────────────────────────────────────────────
-    _render_forge_toolbar(agent)
-    st.markdown(
-        "<div style='border-bottom:1px solid rgba(255,255,255,0.06);margin:8px 0 16px;'></div>",
-        unsafe_allow_html=True,
-    )
-
-    # ── Two-column layout ─────────────────────────────────────────────────────
-    tutor_col, ide_col = st.columns([2, 3], gap="medium")
-
-    with tutor_col:
-        _render_tutor_panel(agent)
-
-    with ide_col:
-        _render_ide_panel(agent)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -973,7 +423,7 @@ def render_atlas() -> None:
         ctrl, chat = st.columns([2, 5], gap="medium")
 
     with ctrl:
-        st.markdown('<div class="agent-ctrl">', unsafe_allow_html=True)
+        st.markdown('<div class="ctrl-accent ctrl-accent-atlas"></div>', unsafe_allow_html=True)
         st.markdown("**🧭 Atlas**")
         st.caption("Learning Coach + Research")
         st.divider()
@@ -1068,6 +518,10 @@ def render_atlas() -> None:
 
         else:  # research mode
             st.divider()
+            if st.button("← Back to Coach", key="atlas_back_to_coach", use_container_width=True):
+                st.session_state.atlas_mode = "coach"
+                st.rerun()
+            st.divider()
             st.markdown('<div class="ctrl-label">Sources</div>', unsafe_allow_html=True)
             st.markdown(
                 "- 🔍 **Tavily** — live web\n"
@@ -1089,8 +543,6 @@ def render_atlas() -> None:
                 st.session_state.ar_messages            = []
                 st.session_state.atlas_research_handoff = None
                 st.rerun()
-
-        st.markdown('</div>', unsafe_allow_html=True)
 
     with chat:
         progress = agent.get_progress()
@@ -1162,8 +614,10 @@ def render_atlas() -> None:
                 st.session_state.la_messages.append(("user", user_input))
 
                 with st.chat_message("assistant"):
-                    with st.spinner("Thinking..."):
-                        response, handoff = agent.chat(user_input)
+                    result = safe_agent_chat(agent, user_input, contextual_spinner("coach"))
+                    if result is None:
+                        st.stop()
+                    response, handoff = result
 
                     # Strip ACTION/HANDOFF lines for display
                     display = "\n".join(
@@ -1182,7 +636,7 @@ def render_atlas() -> None:
                         keyword = suggest_match.group(1).strip()
                         if st.button(
                             f"📄 See papers on \"{keyword}\" →",
-                            key=f"suggest_papers_live",
+                            key="suggest_papers_live",
                         ):
                             st.session_state.papers_preload = keyword
                             st.rerun()
@@ -1209,6 +663,7 @@ def render_atlas() -> None:
                     st.session_state.la_last_achievement = agent._last_achievement
                     agent._last_achievement = None
                 _award_xp(5)
+                show_xp_toast(5, "for chatting")
                 st.rerun()
 
         else:
@@ -1277,7 +732,7 @@ def render_dojo() -> None:
     ctrl, chat = st.columns([2, 5], gap="medium")
 
     with ctrl:
-        st.markdown('<div class="agent-ctrl">', unsafe_allow_html=True)
+        st.markdown('<div class="ctrl-accent ctrl-accent-dojo"></div>', unsafe_allow_html=True)
         st.markdown("**🎯 Dojo**")
         st.caption("Practice Arena")
         st.divider()
@@ -1299,7 +754,8 @@ def render_dojo() -> None:
             if not st.session_state.da_mode_confirm:
                 st.session_state.da_pending_mode = sel_mode
                 st.session_state.da_mode_confirm = True
-                st.rerun()
+                # Do NOT st.rerun() here — let the page re-render naturally
+                # so the confirmation dialog is immediately visible.
 
         if st.session_state.da_mode_confirm:
             st.warning("Changing mode ends your session.")
@@ -1323,7 +779,7 @@ def render_dojo() -> None:
         topic = st.text_input(
             "topic",
             value=agent.topic if agent.topic else "",
-            placeholder="e.g. RAG systems, prompt engineering, LLM evals…",
+            placeholder="e.g. RAG systems, prompt engineering, LLM evals… Leave blank for mixed AI practice",
             label_visibility="collapsed",
             key="dojo_topic",
             disabled=agent.session_active,
@@ -1390,13 +846,15 @@ def render_dojo() -> None:
             st.session_state.da_last_result = None
             st.rerun()
 
-        st.markdown('</div>', unsafe_allow_html=True)
-
     with chat:
         if agent.session_active:
-            _topic_display = agent.topic[:45] + "…" if len(agent.topic) > 45 else agent.topic or "General"
+            topic_label = agent.get_topic_label()
+            _topic_display = topic_label[:45] + "…" if len(topic_label) > 45 else topic_label
+            # Show question progress counter for quiz mode
+            q_num = getattr(agent, "current_question_num", None)
+            q_suffix = f" — Q{q_num}/10" if (agent.mode == "quiz" and q_num) else ""
             badge = {
-                "quiz":      f"🎯 Quiz — {agent.difficulty} — {_topic_display}",
+                "quiz":      f"🎯 Quiz — {agent.difficulty} — {_topic_display}{q_suffix}",
                 "challenge": f"💻 Challenge — {agent.difficulty} — {_topic_display}",
                 "interview": f"🤝 Interview — {agent.role} — {agent.difficulty} — {_topic_display}",
             }.get(agent.mode, "")
@@ -1406,10 +864,10 @@ def render_dojo() -> None:
             with st.chat_message("assistant"):
                 st.markdown(
                     "👋 Hi! I'm **Dojo**, your practice arena.\n\n"
-                    "**🎯 Quiz** — 10 multiple-choice questions on any topic you choose.\n\n"
+                    "**🎯 Quiz** — 10 multiple-choice questions on any AI topic you choose, or a mixed AI set if you leave the topic blank.\n\n"
                     "**💻 Coding Challenge** — A real task with AI code review.\n\n"
                     "**🤝 Mock Interview** — AI Builder or AI PM interview prep.\n\n"
-                    "**Type a topic, pick a difficulty, and click Start!**"
+                    "**Type any AI topic, or leave it blank for mixed-topic practice, then click Start!**"
                 )
 
         for role, content in st.session_state.da_messages:
@@ -1441,7 +899,8 @@ def render_dojo() -> None:
                         r = s["interview"]["by_role"].get(agent.role, {})
                         st.markdown(f"Average: **{r.get('avg_score', 0)}/5**")
                 _award_xp(50)
-                c1, c2 = st.columns(2)
+                show_xp_toast(50, "session complete!")
+                c1, c2, c3 = st.columns(3)
                 if c1.button("▶ Another", key="dojo_another", type="primary", use_container_width=True):
                     agent.reset()
                     with st.spinner("Setting up..."):
@@ -1454,6 +913,15 @@ def render_dojo() -> None:
                     st.session_state.da_messages    = []
                     st.session_state.da_last_result = None
                     st.rerun()
+                if c3.button("📖 Study in Atlas", key="dojo_to_atlas", use_container_width=True):
+                    # Pre-fill Atlas with the topic we just practiced
+                    st.session_state.active_agent = "atlas"
+                    st.session_state.atlas_mode   = "coach"
+                    topic_hint = agent.get_topic_label()
+                    st.session_state.la_messages  = st.session_state.get("la_messages", [])
+                    # Inject a prompt so Atlas knows what to help with
+                    st.session_state._dojo_topic_hint = topic_hint
+                    st.switch_page("pages/agent_view.py")
 
         if agent.session_active and not (last_result and last_result.get("session_complete")):
             placeholder = {
@@ -1468,22 +936,29 @@ def render_dojo() -> None:
                     st.markdown(user_input)
                 st.session_state.da_messages.append(("user", user_input))
 
-                spinner_msg = {
-                    "quiz":      "Grading...",
-                    "challenge": "Reviewing your code...",
-                    "interview": "Thinking...",
-                }.get(agent.mode, "Thinking...")
+                try:
+                    with st.spinner(contextual_spinner(agent.mode)):
+                        replies, result = agent.chat(user_input)
+                except Exception as exc:
+                    etype = type(exc).__name__
+                    if "AuthenticationError" in etype or "api_key" in str(exc).lower():
+                        st.error("**API key error** — check your `.env` file.", icon="🔑")
+                    elif "RateLimitError" in etype or "rate_limit" in str(exc).lower():
+                        st.error("**Rate limit** — wait a moment then try again.", icon="⏳")
+                    else:
+                        st.error(f"**Something went wrong** — {etype}: {exc}", icon="⚠️")
+                    st.stop()
 
-                with st.chat_message("assistant"):
-                    with st.spinner(spinner_msg):
-                        reply, result = agent.chat(user_input)
-                    st.markdown(reply)
+                for r in replies:
+                    with st.chat_message("assistant"):
+                        st.markdown(r)
+                    st.session_state.da_messages.append(("assistant", r))
 
-                st.session_state.da_messages.append(("assistant", reply))
                 st.session_state.da_last_result = result
 
                 xp_gain = 15 if (result and agent.mode == "quiz" and result.get("correct")) else 10
                 _award_xp(xp_gain)
+                show_xp_toast(xp_gain, "correct!" if (result and result.get("correct")) else "for practising")
                 st.rerun()
 
 
@@ -1500,6 +975,12 @@ def render_spark() -> None:
         st.session_state.sa_messages = []
     if "sa_last_save" not in st.session_state:
         st.session_state.sa_last_save = None
+    if "sa_delete_confirm" not in st.session_state:
+        st.session_state.sa_delete_confirm = None
+    if "sa_mode_confirm" not in st.session_state:
+        st.session_state.sa_mode_confirm = False
+    if "sa_pending_mode" not in st.session_state:
+        st.session_state.sa_pending_mode = None
 
     agent = st.session_state.spark_agent
 
@@ -1521,7 +1002,7 @@ def render_spark() -> None:
     ctrl, chat = st.columns([2, 5], gap="medium")
 
     with ctrl:
-        st.markdown('<div class="agent-ctrl">', unsafe_allow_html=True)
+        st.markdown('<div class="ctrl-accent ctrl-accent-spark"></div>', unsafe_allow_html=True)
         st.markdown("**💡 Spark**")
         st.caption("Idea Generator")
         st.divider()
@@ -1539,10 +1020,30 @@ def render_spark() -> None:
         )
         sel_mode = mode_keys[sel_mode_lbl]
         if sel_mode != agent.mode:
-            agent.set_mode(sel_mode)
-            st.session_state.sa_messages  = []
-            st.session_state.sa_last_save = None
-            st.rerun()
+            has_history = len(st.session_state.sa_messages) > 2
+            if has_history and not st.session_state.sa_mode_confirm:
+                st.session_state.sa_pending_mode = sel_mode
+                st.session_state.sa_mode_confirm = True
+            elif not has_history:
+                agent.set_mode(sel_mode)
+                st.session_state.sa_messages  = []
+                st.session_state.sa_last_save = None
+                st.rerun()
+
+        if st.session_state.sa_mode_confirm:
+            st.warning("Switching mode will clear this conversation.")
+            c1, c2 = st.columns(2)
+            if c1.button("Yes, switch", key="spark_mode_yes", use_container_width=True):
+                agent.set_mode(st.session_state.sa_pending_mode)
+                st.session_state.sa_messages  = []
+                st.session_state.sa_last_save = None
+                st.session_state.sa_mode_confirm  = False
+                st.session_state.sa_pending_mode  = None
+                st.rerun()
+            if c2.button("Cancel", key="spark_mode_no", use_container_width=True):
+                st.session_state.sa_mode_confirm = False
+                st.session_state.sa_pending_mode = None
+                st.rerun()
 
         st.markdown('<div class="ctrl-label" style="margin-top:12px;">Skill level</div>', unsafe_allow_html=True)
         skill_opts = ["beginner", "intermediate", "advanced"]
@@ -1565,9 +1066,26 @@ def render_spark() -> None:
                 with st.expander(idea["title"][:30], expanded=False):
                     st.markdown(f"**{idea['topic']}**")
                     st.caption(idea["description"][:120])
-                    if st.button("🗑️ Delete", key=f"spark_del_{idea['id']}", use_container_width=True):
-                        agent.delete_idea(idea["id"])
-                        st.rerun()
+                    # Cross-link to Dojo
+                    if st.button("🎯 Practice this topic", key=f"spark_dojo_{idea['id']}", use_container_width=True):
+                        st.session_state.active_agent = "dojo"
+                        st.session_state.dojo_topic_hint = idea["topic"]
+                        st.switch_page("pages/agent_view.py")
+                    # Delete with confirmation
+                    if st.session_state.sa_delete_confirm == idea["id"]:
+                        st.warning("Delete this idea permanently?")
+                        d1, d2 = st.columns(2)
+                        if d1.button("Yes", key=f"spark_del_yes_{idea['id']}", use_container_width=True):
+                            agent.delete_idea(idea["id"])
+                            st.session_state.sa_delete_confirm = None
+                            st.rerun()
+                        if d2.button("No", key=f"spark_del_no_{idea['id']}", use_container_width=True):
+                            st.session_state.sa_delete_confirm = None
+                            st.rerun()
+                    else:
+                        if st.button("🗑️ Delete", key=f"spark_del_{idea['id']}", use_container_width=True):
+                            st.session_state.sa_delete_confirm = idea["id"]
+                            st.rerun()
         else:
             st.caption("No ideas saved yet.")
 
@@ -1577,8 +1095,6 @@ def render_spark() -> None:
             st.session_state.sa_messages  = []
             st.session_state.sa_last_save = None
             st.rerun()
-
-        st.markdown('</div>', unsafe_allow_html=True)
 
     with chat:
         mode_info = {
@@ -1630,15 +1146,11 @@ def render_spark() -> None:
                 st.markdown(user_input)
             st.session_state.sa_messages.append(("user", user_input))
 
-            spinner_msg = {
-                "brainstorm": "Generating ideas...",
-                "brief":      "Building your project brief...",
-                "feedback":   "Evaluating your idea...",
-            }.get(agent.mode, "Thinking...")
-
             with st.chat_message("assistant"):
-                with st.spinner(spinner_msg):
-                    reply, notification = agent.chat(user_input)
+                result = safe_agent_chat(agent, user_input, contextual_spinner(agent.mode))
+                if result is None:
+                    st.stop()
+                reply, notification = result
                 display = "\n".join(
                     line for line in reply.splitlines()
                     if not line.strip().startswith("ACTION:")
@@ -1649,8 +1161,10 @@ def render_spark() -> None:
             if notification:
                 st.session_state.sa_last_save = notification
                 _award_xp(20)
+                show_xp_toast(20, "idea saved!")
             else:
                 _award_xp(5)
+                show_xp_toast(5, "for chatting")
             st.rerun()
 
 
@@ -1782,6 +1296,17 @@ def render_syllabus() -> None:
         )
 
         with st.expander(f"{track['name']}  {track_roles_str}", expanded=True):
+            # Role dot legend — shown once per track
+            legend_parts = [
+                f'<span style="color:{ROLE_TRACKS[r]["color"]};">●</span> {ROLE_TRACKS[r]["label"]}'
+                for r in ROLE_TRACKS if r in active_filter
+            ]
+            if legend_parts:
+                st.markdown(
+                    '<div style="font-size:10px; color:#45475A; font-family:\'JetBrains Mono\',monospace; '
+                    f'margin-bottom:6px;">{" &nbsp;·&nbsp; ".join(legend_parts)}</div>',
+                    unsafe_allow_html=True,
+                )
             for taski, task in visible_tasks:
                 key       = get_task_key(phase["id"], ti, taski)
                 status    = syllabus_prog.get(key, "todo")
@@ -1868,8 +1393,7 @@ if active == "oracle":  # legacy redirect
     st.session_state.atlas_mode   = "research"
     st.rerun()
 
-if   active == "forge":    render_forge()
-elif active == "atlas":    render_atlas()
+if   active == "atlas":    render_atlas()
 elif active == "dojo":     render_dojo()
 elif active == "spark":    render_spark()
 elif active == "syllabus": render_syllabus()

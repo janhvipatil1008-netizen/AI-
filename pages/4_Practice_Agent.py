@@ -4,12 +4,12 @@
 WHAT THIS PAGE DOES:
 ---------------------
 Provides a practice interface with three modes:
-  - Quiz             — Multiple-choice questions on a curriculum topic
+  - Quiz             — Multiple-choice questions on any AI topic
   - Coding Challenge — A coding task with AI-powered code review
   - Mock Interview   — Simulated AI Builder or AI PM interview
 
 LAYOUT:
-  Sidebar — mode/topic/role selector, Start button, stats expander, reset
+  Sidebar — mode/topic/difficulty/role selector, Start button, stats expander, reset
   Main    — full-width chat (same pattern as Research Agent)
 
 HOW THE RESULT DICT WORKS:
@@ -22,8 +22,8 @@ When result_dict["session_complete"] is True, we show a summary + balloons.
 
 import streamlit as st
 from agents.practice_agent import PracticeAgent
-from config.prompts import CURRICULUM_TOPICS
 from utils.ui_theme import inject_css
+from utils.ui_helpers import contextual_spinner
 
 # ── Page configuration ────────────────────────────────────────────────────────
 st.set_page_config(
@@ -81,11 +81,12 @@ with st.sidebar:
 
     # ── Mode change protection ────────────────────────────────────────────────
     # If the learner changes mode mid-session, ask them to confirm.
+    # NOTE: do NOT call st.rerun() here — let the page re-render naturally so
+    # the confirmation dialog is visible immediately (avoids UI flicker).
     if selected_mode != agent.mode and agent.session_active:
         if not st.session_state.pa_mode_confirm:
             st.session_state.pa_pending_mode = selected_mode
             st.session_state.pa_mode_confirm = True
-            st.rerun()
 
     if st.session_state.pa_mode_confirm:
         st.warning("Changing mode will end your current session.")
@@ -108,15 +109,27 @@ with st.sidebar:
 
     st.divider()
 
-    # ── Topic selector (Quiz + Challenge only) ────────────────────────────────
-    if agent.mode in ("quiz", "challenge"):
-        topic = st.selectbox(
-            "Topic",
-            options=CURRICULUM_TOPICS,
-            index=CURRICULUM_TOPICS.index(agent.topic) if agent.topic in CURRICULUM_TOPICS else 0,
-        )
-        if not agent.session_active:
-            agent.set_topic(topic)
+    # ── Topic selector (all modes, optional) ─────────────────────────────────
+    topic = st.text_input(
+        "Topic",
+        value=agent.topic,
+        placeholder="e.g. diffusion models, RLHF, AI safety, evals, vector databases",
+        help="Enter any AI topic. Leave blank for mixed practice across all AI topics.",
+        disabled=agent.session_active,
+    )
+    if not agent.session_active:
+        agent.set_topic(topic)
+
+    difficulty_options = ["Beginner", "Intermediate", "Advanced"]
+    difficulty = st.radio(
+        "Difficulty",
+        options=difficulty_options,
+        index=difficulty_options.index(agent.difficulty) if agent.difficulty in difficulty_options else 1,
+        horizontal=True,
+        disabled=agent.session_active,
+    )
+    if not agent.session_active:
+        agent.set_difficulty(difficulty)
 
     # ── Role selector (always shown — relevant to interview, optional for others) ──
     role = st.radio(
@@ -139,8 +152,8 @@ with st.sidebar:
     if st.button(f"▶ Start New {mode_label}", use_container_width=True, type="primary"):
         agent.reset()
         agent.set_mode(selected_mode)
-        if agent.mode in ("quiz", "challenge"):
-            agent.set_topic(topic)
+        agent.set_topic(topic)
+        agent.set_difficulty(difficulty)
         agent.set_role(role)
 
         with st.spinner("Setting up your session..."):
@@ -197,9 +210,9 @@ with st.sidebar:
 # Active session badge
 if agent.session_active:
     mode_badge = {
-        "quiz": f"🎯 Quiz — {agent.topic}",
-        "challenge": f"💻 Coding Challenge — {agent.topic}",
-        "interview": f"🤝 Mock Interview — {agent.role}",
+        "quiz": f"🎯 Quiz — {agent.difficulty} — {agent.get_topic_label()}",
+        "challenge": f"💻 Coding Challenge — {agent.difficulty} — {agent.get_topic_label()}",
+        "interview": f"🤝 Mock Interview — {agent.role} — {agent.difficulty} — {agent.get_topic_label()}",
     }.get(agent.mode, "")
     st.info(mode_badge)
 
@@ -209,14 +222,15 @@ if not st.session_state.pa_messages:
         st.markdown(
             "👋 Hi! I'm your **Practice Agent**.\n\n"
             "I can assess your AI knowledge in three ways:\n\n"
-            "**🎯 Quiz** — I ask 5 multiple-choice questions on a topic you choose. "
+            "**🎯 Quiz** — I ask 10 multiple-choice questions on any AI topic you choose, "
+            "or across a mixed set of AI topics if you leave the topic blank. "
             "Answer with A, B, C, or D. I'll grade each one and explain the answer.\n\n"
             "**💻 Coding Challenge** — I give you a real coding task. "
             "Paste your solution and I'll review it like a senior engineer would.\n\n"
             "**🤝 Mock Interview** — I play a hiring manager at an AI company. "
             "Choose AI Builder (technical) or AI PM (product) and practice "
             "answering interview questions with honest feedback.\n\n"
-            "**Pick a mode and topic in the sidebar, then click Start!**"
+            "**Pick a mode, enter any AI topic or leave it blank for mixed practice, and click Start!**"
         )
 
 # Render existing messages
@@ -297,17 +311,27 @@ if agent.session_active and not (last_result and last_result.get("session_comple
             st.markdown(user_input)
         st.session_state.pa_messages.append(("user", user_input))
 
-        # Get response
-        with st.chat_message("assistant"):
-            spinner_msg = {
-                "quiz": "Grading...",
-                "challenge": "Reviewing your code...",
-                "interview": "Thinking...",
-            }.get(agent.mode, "Thinking...")
+        # Get response — replies is a list: [grade] or [grade, next_question]
+        spinner_msg = contextual_spinner(agent.mode)
+        try:
             with st.spinner(spinner_msg):
-                reply, result = agent.chat(user_input)
-            st.markdown(reply)
+                replies, result = agent.chat(user_input)
+        except Exception as exc:
+            etype = type(exc).__name__
+            if "AuthenticationError" in etype or "api_key" in str(exc).lower():
+                st.error("**API key error** — check your `.env` file and restart.", icon="🔑")
+            elif "RateLimitError" in etype or "rate_limit" in str(exc).lower():
+                st.error("**Rate limit reached** — wait a moment then try again.", icon="⏳")
+            elif "Timeout" in etype or "timeout" in str(exc).lower():
+                st.error("**Request timed out** — try again.", icon="⌛")
+            else:
+                st.error(f"**Something went wrong** — {etype}: {exc}", icon="⚠️")
+            st.stop()
 
-        st.session_state.pa_messages.append(("assistant", reply))
+        for r in replies:
+            with st.chat_message("assistant"):
+                st.markdown(r)
+            st.session_state.pa_messages.append(("assistant", r))
+
         st.session_state.pa_last_result = result
         st.rerun()

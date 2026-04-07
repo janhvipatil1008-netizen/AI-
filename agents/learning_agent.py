@@ -153,7 +153,12 @@ class LearningAgent:
             if goal.get("status") not in ("achieved",):
                 self._recalculate_health(goal)
         self.profile["updated_at"] = datetime.now(timezone.utc).isoformat()
-        self.profile["conversation_history"] = self.conversation_history
+        # Cap history saved to disk to prevent unbounded file growth.
+        # Keep system message (index 0) + latest 99 turns.
+        history_to_save = self.conversation_history
+        if len(history_to_save) > 100:
+            history_to_save = [history_to_save[0]] + history_to_save[-99:]
+        self.profile["conversation_history"] = history_to_save
         Path(self.PROFILE_PATH).write_text(json.dumps(self.profile, indent=2))
 
     def _rebuild_system_message(self) -> None:

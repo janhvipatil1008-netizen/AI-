@@ -24,6 +24,7 @@ LAYOUT:
 import streamlit as st
 from agents.idea_agent import IdeaAgent
 from utils.ui_theme import inject_css
+from utils.ui_helpers import safe_agent_chat, contextual_spinner
 
 # ── Page configuration ────────────────────────────────────────────────────────
 st.set_page_config(
@@ -44,6 +45,16 @@ if "ia_messages" not in st.session_state:
 if "ia_last_save" not in st.session_state:
     # Stores the most recent save notification so we can display it once
     st.session_state.ia_last_save = None
+
+if "ia_mode_confirm" not in st.session_state:
+    st.session_state.ia_mode_confirm = False
+
+if "ia_pending_mode" not in st.session_state:
+    st.session_state.ia_pending_mode = None
+
+if "ia_delete_confirm" not in st.session_state:
+    # Tracks which idea id is pending delete confirmation
+    st.session_state.ia_delete_confirm = None
 
 # Shorthand
 agent = st.session_state.idea_agent
@@ -77,12 +88,32 @@ with st.sidebar:
     )
     selected_mode = mode_keys[selected_mode_label]
 
-    # Apply mode change immediately (no session guard — unlike Practice Agent)
+    # Guard mode change if conversation is in progress
     if selected_mode != agent.mode:
-        agent.set_mode(selected_mode)
-        st.session_state.ia_messages = []
-        st.session_state.ia_last_save = None
-        st.rerun()
+        has_history = len(st.session_state.ia_messages) > 2
+        if has_history and not st.session_state.ia_mode_confirm:
+            st.session_state.ia_pending_mode = selected_mode
+            st.session_state.ia_mode_confirm = True
+        elif not has_history:
+            agent.set_mode(selected_mode)
+            st.session_state.ia_messages = []
+            st.session_state.ia_last_save = None
+            st.rerun()
+
+    if st.session_state.ia_mode_confirm:
+        st.warning("Switching mode will clear this conversation.")
+        col1, col2 = st.columns(2)
+        if col1.button("Yes, switch", use_container_width=True, key="ia_mode_yes"):
+            agent.set_mode(st.session_state.ia_pending_mode)
+            st.session_state.ia_messages = []
+            st.session_state.ia_last_save = None
+            st.session_state.ia_mode_confirm = False
+            st.session_state.ia_pending_mode = None
+            st.rerun()
+        if col2.button("Cancel", use_container_width=True, key="ia_mode_no"):
+            st.session_state.ia_mode_confirm = False
+            st.session_state.ia_pending_mode = None
+            st.rerun()
 
     st.divider()
 
@@ -115,9 +146,20 @@ with st.sidebar:
                     f"Created in *{idea['mode_created_in']}* mode "
                     f"· {idea['saved_at'][:10]}"
                 )
-                if st.button("🗑️ Delete", key=f"del_{idea['id']}", use_container_width=True):
-                    agent.delete_idea(idea["id"])
-                    st.rerun()
+                if st.session_state.ia_delete_confirm == idea["id"]:
+                    st.warning("Delete this idea permanently?")
+                    c1, c2 = st.columns(2)
+                    if c1.button("Yes, delete", key=f"del_yes_{idea['id']}", use_container_width=True):
+                        agent.delete_idea(idea["id"])
+                        st.session_state.ia_delete_confirm = None
+                        st.rerun()
+                    if c2.button("Cancel", key=f"del_no_{idea['id']}", use_container_width=True):
+                        st.session_state.ia_delete_confirm = None
+                        st.rerun()
+                else:
+                    if st.button("🗑️ Delete", key=f"del_{idea['id']}", use_container_width=True):
+                        st.session_state.ia_delete_confirm = idea["id"]
+                        st.rerun()
     else:
         st.caption("No ideas saved yet.")
         st.caption(
@@ -220,15 +262,15 @@ if user_input:
         st.markdown(user_input)
     st.session_state.ia_messages.append(("user", user_input))
 
-    # Get response
+    # Get response (with error handling)
     with st.chat_message("assistant"):
-        spinner_msg = {
-            "brainstorm": "Generating ideas...",
-            "brief":      "Building your project brief...",
-            "feedback":   "Evaluating your idea...",
-        }.get(agent.mode, "Thinking...")
-        with st.spinner(spinner_msg):
-            reply, notification = agent.chat(user_input)
+        result = safe_agent_chat(
+            agent, user_input, contextual_spinner(agent.mode)
+        )
+        if result is None:
+            st.stop()
+
+        reply, notification = result
 
         # Strip the ACTION token line from the displayed reply
         # (the user sees the idea saved notification instead)
